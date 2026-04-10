@@ -1,0 +1,14 @@
+.DS_Store
+
+# Local assistant/tooling state
+.claude/
+
+# Xcode user state
+*.xcuserstate
+xcuserdata/
+
+# Build artifacts
+build/
+DerivedData/
+*.xcarchive/
+export/
