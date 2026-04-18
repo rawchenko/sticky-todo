@@ -48,6 +48,7 @@ struct TodoCheckboxToggleStyle: ToggleStyle {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor(.pointingHand)
     }
 }
 
@@ -78,27 +79,25 @@ struct TodoRowView: View {
             }
             .toggleStyle(TodoCheckboxToggleStyle())
 
-            Group {
-                if isEditing {
-                    TextField("Task", text: $draftTitle, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 14))
-                        .foregroundStyle(FloatDoTheme.textPrimary)
-                        .lineLimit(1...5)
-                        .focused($isEditorFocused)
-                        .onSubmit(commitEdit)
-                        .onExitCommand(perform: cancelEdit)
-                        .frame(maxWidth: .infinity, minHeight: 18, alignment: .topLeading)
-                } else {
-                    Text(item.title)
-                        .font(.system(size: 14))
-                        .strikethrough(item.isCompleted)
-                        .foregroundStyle(item.isCompleted ? FloatDoTheme.textSecondary : FloatDoTheme.textPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, minHeight: 18, alignment: .topLeading)
-                        .contentShape(Rectangle())
-                        .onTapGesture(count: 2, perform: beginEdit)
-                }
+            if isEditing {
+                TextField("Task", text: $draftTitle, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 14))
+                    .foregroundStyle(FloatDoTheme.textPrimary)
+                    .lineLimit(1...5)
+                    .focused($isEditorFocused)
+                    .onSubmit(commitEdit)
+                    .onExitCommand(perform: cancelEdit)
+                    .frame(maxWidth: .infinity, minHeight: 18, alignment: .topLeading)
+            } else {
+                Text(item.title)
+                    .font(.system(size: 14))
+                    .strikethrough(item.isCompleted)
+                    .foregroundStyle(item.isCompleted ? FloatDoTheme.textSecondary : FloatDoTheme.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(minHeight: 18, alignment: .topLeading)
+                    .pointerCursor(.iBeam, active: !isDragActive)
+                    .onTapGesture(perform: beginEdit)
             }
 
             Spacer(minLength: 4)
@@ -111,6 +110,7 @@ struct TodoRowView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerCursor(.pointingHand, active: isHovering && !isDragActive && !isEditing)
             .opacity(isHovering && !isDragActive && !isEditing ? 1 : 0)
             .allowsHitTesting(isHovering && !isDragActive && !isEditing)
         }
@@ -132,17 +132,11 @@ struct TodoRowView: View {
         .scaleEffect(isDragging ? 1.03 : 1.0)
         .shadow(color: .black.opacity(isDragging ? 0.45 : 0), radius: 16, y: 6)
         .zIndex(isDragging ? 1 : 0)
+        .pointerCursor(hoverCursor, active: !isDragActive)
         .onHover { hovering in
             guard !isDragActive else { return }
             withAnimation(.easeInOut(duration: 0.15)) {
                 isHovering = hovering
-            }
-            if isEditing {
-                NSCursor.iBeam.set()
-            } else if hovering {
-                NSCursor.openHand.set()
-            } else {
-                NSCursor.arrow.set()
             }
         }
         .onChange(of: isDragActive) { _, active in
@@ -195,6 +189,8 @@ struct TodoRowView: View {
         isEditing = false
         isEditorFocused = false
     }
+
+    private var hoverCursor: NSCursor? { .openHand }
 
     private var rowBackground: some View {
         RoundedRectangle(cornerRadius: 12, style: .continuous)

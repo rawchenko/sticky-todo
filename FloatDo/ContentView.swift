@@ -18,6 +18,7 @@ private struct AddListButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor(.pointingHand)
         .background(WindowDragBlocker())
         .scaleEffect(isPressed ? 0.9 : 1.0)
         .opacity(isHovering ? 1 : 0.72)
@@ -325,6 +326,7 @@ struct ContentView: View {
             }
             .floatDoGlassButton(prominent: canSubmit)
             .disabled(!canSubmit)
+            .pointerCursor(canSubmit ? .pointingHand : nil)
             .animation(.easeInOut(duration: 0.15), value: canSubmit)
         }
         .padding(.leading, 18)
