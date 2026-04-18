@@ -1,13 +1,13 @@
 import SwiftUI
 import AppKit
 
-private struct WindowDragBlocker: NSViewRepresentable {
+struct WindowDragBlocker: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView { BlockerView() }
     func updateNSView(_ nsView: NSView, context: Context) {}
-}
 
-private final class BlockerView: NSView {
-    override var mouseDownCanMoveWindow: Bool { false }
+    private final class BlockerView: NSView {
+        override var mouseDownCanMoveWindow: Bool { false }
+    }
 }
 
 struct RowHeightPreferenceKey: PreferenceKey {
@@ -145,12 +145,12 @@ struct TodoRowView: View {
                 NSCursor.arrow.set()
             }
         }
-        .onChange(of: isDragActive) { active in
+        .onChange(of: isDragActive) { _, active in
             if active && isHovering {
                 isHovering = false
             }
         }
-        .onChange(of: isEditorFocused) { focused in
+        .onChange(of: isEditorFocused) { _, focused in
             if !focused && isEditing {
                 commitEdit()
             }
