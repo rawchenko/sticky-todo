@@ -37,7 +37,6 @@ struct ListPillView: View {
     @State private var isPressed = false
     @State private var isShowingIconPicker = false
     @State private var didPushCursor = false
-    @State private var didPushHoverCursor = false
     @FocusState private var isEditorFocused: Bool
 
     var body: some View {
@@ -66,6 +65,7 @@ struct ListPillView: View {
                     .foregroundStyle(FloatDoTheme.textPrimary)
                     .lineLimit(1)
                     .fixedSize()
+                    .pointerCursor(.iBeam, active: !isDragActive)
                     .transition(
                         .asymmetric(
                             insertion: .opacity.combined(with: .scale(scale: 0.82, anchor: .leading)),
@@ -110,10 +110,6 @@ struct ListPillView: View {
         .gesture(
             DragGesture(minimumDistance: 6, coordinateSpace: .named("lists"))
                 .onChanged { value in
-                    if didPushHoverCursor {
-                        NSCursor.pop()
-                        didPushHoverCursor = false
-                    }
                     if !didPushCursor {
                         NSCursor.closedHand.push()
                         didPushCursor = true
@@ -145,19 +141,11 @@ struct ListPillView: View {
                 }
             )
         }
+        .pointerCursor(isEditing ? .iBeam : .openHand, active: !isDragActive)
         .onHover { hovering in
             guard !isDragActive else { return }
             isHovering = hovering
             if !hovering { isPressed = false }
-
-            let shouldShow = hovering && !isEditing
-            if shouldShow && !didPushHoverCursor {
-                NSCursor.openHand.push()
-                didPushHoverCursor = true
-            } else if !shouldShow && didPushHoverCursor {
-                NSCursor.pop()
-                didPushHoverCursor = false
-            }
         }
         .onChange(of: isDragActive) { _, active in
             if active && isHovering {
@@ -174,16 +162,6 @@ struct ListPillView: View {
             if didPushCursor {
                 NSCursor.pop()
                 didPushCursor = false
-            }
-            if didPushHoverCursor {
-                NSCursor.pop()
-                didPushHoverCursor = false
-            }
-        }
-        .onChange(of: isEditing) { _, editing in
-            if editing && didPushHoverCursor {
-                NSCursor.pop()
-                didPushHoverCursor = false
             }
         }
         .onChange(of: isEditorFocused) { _, focused in
@@ -299,6 +277,7 @@ private struct EmojiCell: View {
                 isHovering = hovering
                 if !hovering { isPressed = false }
             }
+            .pointerCursor(.pointingHand)
             .onTapGesture { action() }
             .onLongPressGesture(minimumDuration: .infinity, maximumDistance: 24, perform: {}) { pressing in
                 isPressed = pressing

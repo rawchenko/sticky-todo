@@ -48,6 +48,7 @@ struct TodoCheckboxToggleStyle: ToggleStyle {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointerCursor(.pointingHand)
     }
 }
 
@@ -56,17 +57,27 @@ struct TodoRowView: View {
     let isDragging: Bool
     let isDragActive: Bool
     let yOffset: CGFloat
+    var depth: Int = 0
     var onToggle: () -> Void
     var onDelete: () -> Void
     var onRename: (String) -> Void = { _ in }
+    var onAddSubtask: (() -> Void)? = nil
     var onDragChanged: (CGFloat) -> Void = { _ in }
     var onDragEnded: (CGFloat) -> Void = { _ in }
 
     @State private var isHovering = false
     @State private var didPushCursor = false
-    @State private var isEditing = false
     @State private var draftTitle = ""
     @FocusState private var isEditorFocused: Bool
+
+    private var showsStrikethroughOverlay: Bool {
+        item.isCompleted && !isEditorFocused
+    }
+
+    private var titleColor: Color {
+        if showsStrikethroughOverlay { return .clear }
+        return item.isCompleted ? FloatDoTheme.textSecondary : FloatDoTheme.textPrimary
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -78,30 +89,46 @@ struct TodoRowView: View {
             }
             .toggleStyle(TodoCheckboxToggleStyle())
 
-            Group {
-                if isEditing {
-                    TextField("Task", text: $draftTitle, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 14))
-                        .foregroundStyle(FloatDoTheme.textPrimary)
-                        .lineLimit(1...5)
-                        .focused($isEditorFocused)
-                        .onSubmit(commitEdit)
-                        .onExitCommand(perform: cancelEdit)
-                        .frame(maxWidth: .infinity, minHeight: 18, alignment: .topLeading)
-                } else {
+            ZStack(alignment: .topLeading) {
+                TextField("Task", text: $draftTitle, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 14))
+                    .foregroundStyle(titleColor)
+                    .lineLimit(1...5)
+                    .focused($isEditorFocused)
+                    .onSubmit { isEditorFocused = false }
+                    .onExitCommand(perform: cancelEdit)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                if showsStrikethroughOverlay {
                     Text(item.title)
                         .font(.system(size: 14))
-                        .strikethrough(item.isCompleted)
-                        .foregroundStyle(item.isCompleted ? FloatDoTheme.textSecondary : FloatDoTheme.textPrimary)
+                        .strikethrough(true)
+                        .foregroundStyle(FloatDoTheme.textSecondary)
+                        .lineLimit(1...5)
                         .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, minHeight: 18, alignment: .topLeading)
-                        .contentShape(Rectangle())
-                        .onTapGesture(count: 2, perform: beginEdit)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .allowsHitTesting(false)
                 }
             }
+            .frame(minHeight: 18, alignment: .topLeading)
+            .pointerCursor(.iBeam, active: !isDragActive)
 
             Spacer(minLength: 4)
+
+            if let onAddSubtask {
+                Button(action: onAddSubtask) {
+                    Image(systemName: "arrow.turn.down.right")
+                        .font(.system(size: 11, weight: .regular))
+                        .foregroundStyle(FloatDoTheme.textSecondary)
+                        .frame(width: 22, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointerCursor(.pointingHand, active: isHovering && !isDragActive && !isEditorFocused)
+                .opacity(isHovering && !isDragActive && !isEditorFocused ? 1 : 0)
+                .allowsHitTesting(isHovering && !isDragActive && !isEditorFocused)
+            }
 
             Button(action: onDelete) {
                 Image(systemName: "trash")
@@ -111,10 +138,12 @@ struct TodoRowView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .opacity(isHovering && !isDragActive && !isEditing ? 1 : 0)
-            .allowsHitTesting(isHovering && !isDragActive && !isEditing)
+            .pointerCursor(.pointingHand, active: isHovering && !isDragActive && !isEditorFocused)
+            .opacity(isHovering && !isDragActive && !isEditorFocused ? 1 : 0)
+            .allowsHitTesting(isHovering && !isDragActive && !isEditorFocused)
         }
-        .padding(.horizontal, 12)
+        .padding(.leading, depth > 0 ? 34 : 12)
+        .padding(.trailing, 12)
         .padding(.vertical, 11)
         .background(WindowDragBlocker())
         .background(rowBackground)
@@ -132,17 +161,11 @@ struct TodoRowView: View {
         .scaleEffect(isDragging ? 1.03 : 1.0)
         .shadow(color: .black.opacity(isDragging ? 0.45 : 0), radius: 16, y: 6)
         .zIndex(isDragging ? 1 : 0)
+        .pointerCursor(hoverCursor, active: !isDragActive)
         .onHover { hovering in
             guard !isDragActive else { return }
             withAnimation(.easeInOut(duration: 0.15)) {
                 isHovering = hovering
-            }
-            if isEditing {
-                NSCursor.iBeam.set()
-            } else if hovering {
-                NSCursor.openHand.set()
-            } else {
-                NSCursor.arrow.set()
             }
         }
         .onChange(of: isDragActive) { _, active in
@@ -151,9 +174,11 @@ struct TodoRowView: View {
             }
         }
         .onChange(of: isEditorFocused) { _, focused in
-            if !focused && isEditing {
-                commitEdit()
-            }
+            if !focused { commitEdit() }
+        }
+        .task(id: item.id) { draftTitle = item.title }
+        .onChange(of: item.title) { _, new in
+            if !isEditorFocused { draftTitle = new }
         }
         .gesture(
             DragGesture(minimumDistance: 8, coordinateSpace: .named("list"))
@@ -171,30 +196,27 @@ struct TodoRowView: View {
                     }
                     onDragEnded(value.translation.height)
                 },
-            including: isEditing ? .subviews : .all
+            including: isEditorFocused ? .subviews : .all
         )
     }
 
-    private func beginEdit() {
-        draftTitle = item.title
-        isEditing = true
-        isEditorFocused = true
-    }
-
     private func commitEdit() {
-        guard isEditing else { return }
         let trimmed = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty && trimmed != item.title {
+        if trimmed.isEmpty {
+            draftTitle = item.title
+            return
+        }
+        if trimmed != item.title {
             onRename(trimmed)
         }
-        isEditing = false
-        isEditorFocused = false
     }
 
     private func cancelEdit() {
-        isEditing = false
+        draftTitle = item.title
         isEditorFocused = false
     }
+
+    private var hoverCursor: NSCursor? { .openHand }
 
     private var rowBackground: some View {
         RoundedRectangle(cornerRadius: 12, style: .continuous)
