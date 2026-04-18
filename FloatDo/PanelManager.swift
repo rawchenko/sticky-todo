@@ -129,7 +129,7 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
         // fully-transparent pixels — otherwise right-clicks and drags on
         // empty regions of the panel leak through to the desktop below.
         panel.backgroundColor = NSColor(white: 0, alpha: 0.01)
-        panel.hasShadow = false
+        panel.hasShadow = true
         panel.isMovableByWindowBackground = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false

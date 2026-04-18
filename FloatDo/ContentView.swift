@@ -65,11 +65,6 @@ struct ContentView: View {
 
             ZStack(alignment: panelManager.currentCorner.alignment) {
                 PanelGlassBackground(shape: shape)
-                    .shadow(
-                        color: FloatDoTheme.panelShadow(opacity: 0.5),
-                        radius: PanelMetrics.shadowRadius,
-                        y: 8
-                    )
                     .allowsHitTesting(false)
 
                 WindowDragZone()
