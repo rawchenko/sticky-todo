@@ -9,6 +9,21 @@ final class HoverTrackingHostingView<Content: View>: NSHostingView<Content> {
     var onHoverChange: ((Bool) -> Void)?
     private var trackingArea: NSTrackingArea?
 
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// Ensures transparent SwiftUI regions still count as "on the panel" so the
+    /// `isMovableByWindowBackground` + `mouseDownCanMoveWindow` path can drag
+    /// the window. Without this, empty regions return `nil` and clicks escape.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        if let hit = super.hitTest(point), hit !== self {
+            return hit
+        }
+        let localPoint = convert(point, from: superview)
+        return bounds.contains(localPoint) ? self : nil
+    }
+
     override func updateTrackingAreas() {
         if let trackingArea {
             removeTrackingArea(trackingArea)
@@ -91,6 +106,7 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     private var panel: KeyablePanel?
     @Published var isCollapsed = true
     @Published var currentCorner: ScreenCorner = .topRight
+    @Published var isDragging = false
 
     private let expandedSize = NSSize(width: PanelMetrics.expandedSize.width, height: PanelMetrics.expandedSize.height)
     private let collapsedSize = NSSize(width: PanelMetrics.collapsedSize.width, height: PanelMetrics.collapsedSize.height)
@@ -109,7 +125,10 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
 
         panel.level = .floating
         panel.isOpaque = false
-        panel.backgroundColor = .clear
+        // Non-zero alpha avoids AppKit's window-server click-through on
+        // fully-transparent pixels — otherwise right-clicks and drags on
+        // empty regions of the panel leak through to the desktop below.
+        panel.backgroundColor = NSColor(white: 0, alpha: 0.01)
         panel.hasShadow = false
         panel.isMovableByWindowBackground = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
@@ -117,7 +136,7 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
         panel.animationBehavior = .utilityWindow
         panel.delegate = self
 
-        let hostingView = HoverTrackingHostingView(rootView: contentView.background(Color.clear))
+        let hostingView = HoverTrackingHostingView(rootView: contentView)
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
         hostingView.layer?.isOpaque = false
@@ -126,10 +145,6 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
             self?.handlePointerHoverChange(isHovered)
         }
         panel.contentView = hostingView
-
-        panel.contentView?.wantsLayer = true
-        panel.contentView?.layer?.backgroundColor = NSColor.clear.cgColor
-        panel.contentView?.layer?.isOpaque = false
 
         self.panel = panel
         positionInCorner(.topRight)
@@ -179,6 +194,11 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     // MARK: - Corner snapping
 
     private func snapToNearestCorner() {
+        if NSEvent.pressedMouseButtons & 1 != 0 {
+            scheduleSnapToNearestCorner()
+            return
+        }
+
         guard let panel = panel, let screen = bestScreen(for: panel.frame) ?? NSScreen.main else { return }
 
         let frame = panel.frame
@@ -197,10 +217,18 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
 
         currentCorner = corner
         positionInCorner(corner, animated: true)
+        withAnimation(PanelMotion.stateAnimation) {
+            isDragging = false
+        }
     }
 
     func windowDidMove(_ notification: Notification) {
         guard !isProgrammaticMove else { return }
+        if !isDragging {
+            withAnimation(PanelMotion.stateAnimation) {
+                isDragging = true
+            }
+        }
         scheduleSnapToNearestCorner()
     }
 
@@ -299,6 +327,10 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
         pendingHoverWorkItem?.cancel()
         isPointerInsidePanel = isHovered
 
+        if isDragging {
+            return
+        }
+
         if isHovered {
             expand()
             return
@@ -307,7 +339,7 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.syncHoverStateWithPointerLocation()
-            if !self.isPointerInsidePanel {
+            if !self.isPointerInsidePanel && !self.isDragging {
                 self.collapse()
             }
         }

@@ -54,6 +54,15 @@ class TodoStore: ObservableObject {
         save()
     }
 
+    func rename(_ item: TodoItem, to newTitle: String) {
+        let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
+        guard items[idx].title != trimmed else { return }
+        items[idx].title = trimmed
+        save()
+    }
+
     func toggle(_ item: TodoItem) {
         guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
         items[idx].isCompleted.toggle()
@@ -62,6 +71,15 @@ class TodoStore: ObservableObject {
 
     func delete(_ item: TodoItem) {
         items.removeAll { $0.id == item.id }
+        save()
+    }
+
+    func move(from: Int, to: Int) {
+        guard items.indices.contains(from),
+              to >= 0, to < items.count,
+              from != to else { return }
+        let item = items.remove(at: from)
+        items.insert(item, at: to)
         save()
     }
 
