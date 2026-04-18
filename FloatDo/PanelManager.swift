@@ -332,6 +332,7 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
         }
 
         if isHovered {
+            panel?.makeKey()
             expand()
             return
         }
