@@ -199,7 +199,7 @@ final class TodoStoreTests: XCTestCase {
         store.add(title: "H2")
 
         store.selectList(work.id)
-        store.move(from: 2, to: 0)
+        store.moveTopLevel(from: 2, to: 0)
 
         XCTAssertEqual(store.visibleItems.map(\.title), ["W3", "W1", "W2"])
 
@@ -216,7 +216,7 @@ final class TodoStoreTests: XCTestCase {
         store.add(title: "B")
         store.add(title: "C")
 
-        store.move(from: 0, to: 2)
+        store.moveTopLevel(from: 0, to: 2)
 
         XCTAssertEqual(store.visibleItems.map(\.title), ["B", "C", "A"])
     }
@@ -288,6 +288,221 @@ final class TodoStoreTests: XCTestCase {
 
         store.setListIcon(list, to: "🎯")
         XCTAssertEqual(store.lists.first?.icon, "🎯")
+    }
+
+    // MARK: - Subtasks
+
+    func testDecodeV2FileWithoutParentIDKeyAssignsNil() throws {
+        let fileURL = try makeStoreFileURL()
+        let listID = UUID()
+        let todoID = UUID()
+        let ts = Date().timeIntervalSinceReferenceDate
+
+        let json = """
+        {
+          "schemaVersion": 2,
+          "lists": [{"id":"\(listID.uuidString)","name":"Work","icon":"\(TodoList.defaultIcon)","createdAt":\(ts)}],
+          "todos": [{"id":"\(todoID.uuidString)","title":"Task","isCompleted":false,"listID":"\(listID.uuidString)","createdAt":\(ts)}],
+          "selectedListID":"\(listID.uuidString)"
+        }
+        """
+        try Data(json.utf8).write(to: fileURL, options: .atomic)
+
+        let store = TodoStore(fileURL: fileURL)
+
+        XCTAssertEqual(store.items.count, 1)
+        XCTAssertNil(store.items.first?.parentID)
+        XCTAssertEqual(store.items.first?.title, "Task")
+        XCTAssertNil(store.recoveryNotice)
+    }
+
+    func testAddSubtaskStampsParentAndInheritsListID() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        let list = store.addList(name: "Work")
+        store.add(title: "Parent")
+        let parent = try XCTUnwrap(store.items.first)
+
+        store.addSubtask(title: "Child", parentID: parent.id)
+
+        XCTAssertEqual(store.items.count, 2)
+        let child = try XCTUnwrap(store.items.first(where: { $0.title == "Child" }))
+        XCTAssertEqual(child.parentID, parent.id)
+        XCTAssertEqual(child.listID, list.id)
+    }
+
+    func testTogglingParentCascadesToChildren() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        _ = store.addList(name: "Work")
+        store.add(title: "Parent")
+        let parent = try XCTUnwrap(store.items.first)
+        store.addSubtask(title: "C1", parentID: parent.id)
+        store.addSubtask(title: "C2", parentID: parent.id)
+
+        store.toggle(parent)
+        XCTAssertTrue(store.items.allSatisfy { $0.isCompleted })
+
+        let refreshed = try XCTUnwrap(store.items.first(where: { $0.id == parent.id }))
+        store.toggle(refreshed)
+        XCTAssertTrue(store.items.allSatisfy { !$0.isCompleted })
+    }
+
+    func testCompletingLastChildCompletesParent() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        _ = store.addList(name: "Work")
+        store.add(title: "Parent")
+        let parent = try XCTUnwrap(store.items.first)
+        store.addSubtask(title: "C1", parentID: parent.id)
+        store.addSubtask(title: "C2", parentID: parent.id)
+
+        let c1 = try XCTUnwrap(store.items.first(where: { $0.title == "C1" }))
+        store.toggle(c1)
+        XCTAssertFalse(try XCTUnwrap(store.items.first(where: { $0.id == parent.id })).isCompleted)
+
+        let c2 = try XCTUnwrap(store.items.first(where: { $0.title == "C2" }))
+        store.toggle(c2)
+        XCTAssertTrue(try XCTUnwrap(store.items.first(where: { $0.id == parent.id })).isCompleted)
+    }
+
+    func testUncompletingAnyChildUncompletesParent() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        _ = store.addList(name: "Work")
+        store.add(title: "Parent")
+        let parent = try XCTUnwrap(store.items.first)
+        store.addSubtask(title: "C1", parentID: parent.id)
+        store.addSubtask(title: "C2", parentID: parent.id)
+        store.toggle(parent)
+        XCTAssertTrue(store.items.allSatisfy { $0.isCompleted })
+
+        let c1 = try XCTUnwrap(store.items.first(where: { $0.title == "C1" }))
+        store.toggle(c1)
+        XCTAssertFalse(try XCTUnwrap(store.items.first(where: { $0.id == parent.id })).isCompleted)
+    }
+
+    func testAddingChildToCompleteParentUncompletesParent() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        _ = store.addList(name: "Work")
+        store.add(title: "Parent")
+        let parent = try XCTUnwrap(store.items.first)
+        store.toggle(parent)
+        XCTAssertTrue(try XCTUnwrap(store.items.first).isCompleted)
+
+        store.addSubtask(title: "New", parentID: parent.id)
+
+        XCTAssertFalse(try XCTUnwrap(store.items.first(where: { $0.id == parent.id })).isCompleted)
+    }
+
+    func testDeletingParentCascadesChildren() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        _ = store.addList(name: "Work")
+        store.add(title: "Parent")
+        let parent = try XCTUnwrap(store.items.first)
+        store.addSubtask(title: "C1", parentID: parent.id)
+        store.addSubtask(title: "C2", parentID: parent.id)
+        store.add(title: "Other")
+
+        store.delete(parent)
+
+        XCTAssertEqual(store.items.map(\.title), ["Other"])
+    }
+
+    func testDeletingLastChildLeavesParentCompletionIndependent() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        _ = store.addList(name: "Work")
+        store.add(title: "Parent")
+        let parent = try XCTUnwrap(store.items.first)
+        store.addSubtask(title: "OnlyChild", parentID: parent.id)
+
+        let child = try XCTUnwrap(store.items.first(where: { $0.title == "OnlyChild" }))
+        store.delete(child)
+
+        XCTAssertEqual(store.items.map(\.title), ["Parent"])
+        XCTAssertFalse(try XCTUnwrap(store.items.first).isCompleted)
+
+        store.addSubtask(title: "Second", parentID: parent.id)
+        let second = try XCTUnwrap(store.items.first(where: { $0.title == "Second" }))
+        store.toggle(second)
+        XCTAssertTrue(try XCTUnwrap(store.items.first(where: { $0.id == parent.id })).isCompleted)
+
+        store.delete(try XCTUnwrap(store.items.first(where: { $0.title == "Second" })))
+        XCTAssertTrue(try XCTUnwrap(store.items.first(where: { $0.id == parent.id })).isCompleted)
+    }
+
+    func testMoveChildStaysWithinSiblingsSlice() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        let list = store.addList(name: "Work")
+        store.add(title: "P1")
+        let p1 = try XCTUnwrap(store.items.first)
+        store.addSubtask(title: "C1a", parentID: p1.id)
+        store.addSubtask(title: "C1b", parentID: p1.id)
+        store.addSubtask(title: "C1c", parentID: p1.id)
+        store.add(title: "P2")
+
+        store.moveChild(parentID: p1.id, from: 2, to: 0)
+
+        XCTAssertEqual(store.children(of: p1.id).map(\.title), ["C1c", "C1a", "C1b"])
+        XCTAssertEqual(store.topLevelItems(in: list.id).map(\.title), ["P1", "P2"])
+    }
+
+    func testMoveParentCarriesChildrenAsContiguousBlock() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        let list = store.addList(name: "Work")
+        store.add(title: "P1")
+        store.add(title: "P2")
+        store.add(title: "P3")
+
+        let p2 = try XCTUnwrap(store.items.first(where: { $0.title == "P2" }))
+        store.addSubtask(title: "C2a", parentID: p2.id)
+        store.addSubtask(title: "C2b", parentID: p2.id)
+
+        store.moveTopLevel(from: 1, to: 0)
+
+        XCTAssertEqual(store.visibleItems.map(\.title), ["P2", "C2a", "C2b", "P1", "P3"])
+        XCTAssertEqual(store.topLevelItems(in: list.id).map(\.title), ["P2", "P1", "P3"])
+        XCTAssertEqual(store.children(of: p2.id).map(\.title), ["C2a", "C2b"])
+    }
+
+    func testSanitizeDropsOrphanedChildrenOnLoad() throws {
+        let fileURL = try makeStoreFileURL()
+        let listID = UUID()
+        let otherListID = UUID()
+        let parentID = UUID()
+        let okChildID = UUID()
+        let orphanChildID = UUID()
+        let wrongListChildID = UUID()
+        let ghostParentID = UUID()
+        let ts = Date().timeIntervalSinceReferenceDate
+
+        let json = """
+        {
+          "schemaVersion": 3,
+          "lists": [
+            {"id":"\(listID.uuidString)","name":"Work","icon":"\(TodoList.defaultIcon)","createdAt":\(ts)},
+            {"id":"\(otherListID.uuidString)","name":"Other","icon":"\(TodoList.defaultIcon)","createdAt":\(ts)}
+          ],
+          "todos": [
+            {"id":"\(parentID.uuidString)","title":"Parent","isCompleted":false,"listID":"\(listID.uuidString)","createdAt":\(ts)},
+            {"id":"\(okChildID.uuidString)","title":"OK","isCompleted":false,"listID":"\(listID.uuidString)","parentID":"\(parentID.uuidString)","createdAt":\(ts)},
+            {"id":"\(orphanChildID.uuidString)","title":"Orphan","isCompleted":false,"listID":"\(listID.uuidString)","parentID":"\(ghostParentID.uuidString)","createdAt":\(ts)},
+            {"id":"\(wrongListChildID.uuidString)","title":"WrongList","isCompleted":false,"listID":"\(otherListID.uuidString)","parentID":"\(parentID.uuidString)","createdAt":\(ts)}
+          ],
+          "selectedListID":"\(listID.uuidString)"
+        }
+        """
+        try Data(json.utf8).write(to: fileURL, options: .atomic)
+
+        let store = TodoStore(fileURL: fileURL)
+
+        XCTAssertEqual(Set(store.items.map(\.title)), ["Parent", "OK"])
+        XCTAssertEqual(store.children(of: parentID).map(\.title), ["OK"])
     }
 
     private func makeStoreFileURL() throws -> URL {

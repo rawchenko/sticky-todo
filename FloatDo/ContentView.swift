@@ -34,12 +34,87 @@ private struct AddListButton: View {
     }
 }
 
+private struct AddSubtaskRow: View {
+    static let estimatedHeight: CGFloat = 34
+
+    let parentID: UUID
+    var onSubmit: (String) -> Void
+    var onDismiss: () -> Void
+    var yOffset: CGFloat = 0
+
+    @State private var draft = ""
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Circle()
+                .strokeBorder(
+                    Color.dynamic(
+                        light: Color.black.opacity(0.35),
+                        dark: Color.white.opacity(0.45)
+                    ),
+                    lineWidth: 1.5
+                )
+                .frame(width: 18, height: 18)
+
+            TextField("Subtask", text: $draft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 14))
+                .foregroundStyle(FloatDoTheme.textPrimary)
+                .focused($isFocused)
+                .onSubmit(commit)
+                .onExitCommand(perform: onDismiss)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, 34)
+        .padding(.trailing, 12)
+        .padding(.vertical, 8)
+        .background(WindowDragBlocker())
+        .contentShape(Rectangle())
+        .onAppear {
+            DispatchQueue.main.async { isFocused = true }
+        }
+        .onChange(of: isFocused) { _, focused in
+            if !focused && draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                onDismiss()
+            }
+        }
+        .offset(y: yOffset)
+    }
+
+    private func commit() {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            onDismiss()
+            return
+        }
+        onSubmit(trimmed)
+        draft = ""
+    }
+}
+
+private enum TaskEntry: Identifiable {
+    case parent(TodoItem)
+    case child(TodoItem, parentID: UUID)
+    case addSubtask(parentID: UUID)
+
+    var id: String {
+        switch self {
+        case .parent(let item): return "p-\(item.id.uuidString)"
+        case .child(let item, _): return "c-\(item.id.uuidString)"
+        case .addSubtask(let pid): return "add-\(pid.uuidString)"
+        }
+    }
+}
+
 struct ContentView: View {
     @ObservedObject var store: TodoStore
     @ObservedObject var panelManager: PanelManager
     @State private var newTaskTitle = ""
     @State private var dismissedRecoveryNoticeID: UUID?
     @State private var draggingID: UUID?
+    @State private var draggingChildParentID: UUID?
     @State private var dragOffset: CGFloat = 0
     @State private var rowHeights: [UUID: CGFloat] = [:]
     @State private var lastTargetIndex: Int?
@@ -50,6 +125,7 @@ struct ContentView: View {
     @State private var listWidths: [UUID: CGFloat] = [:]
     @State private var lastListTargetIndex: Int?
     @State private var listEscapeMonitor: Any?
+    @State private var addingSubtaskFor: UUID?
     @FocusState private var isInputFocused: Bool
 
     private static let reorderAnimation = Animation.spring(response: 0.35, dampingFraction: 0.78)
@@ -252,36 +328,12 @@ struct ContentView: View {
     }
 
     private var taskList: some View {
-        let visible = sortedItems
+        let entries = currentEntries
         return ScrollView {
             LazyVStack(spacing: 0) {
-                ForEach(Array(visible.enumerated()), id: \.element.id) { index, item in
-                    TodoRowView(
-                        item: item,
-                        isDragging: draggingID == item.id,
-                        isDragActive: draggingID != nil,
-                        yOffset: visualOffset(for: index, in: visible),
-                        onToggle: {
-                            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-                                store.toggle(item)
-                            }
-                        },
-                        onDelete: {
-                            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-                                store.delete(item)
-                            }
-                        },
-                        onRename: { newTitle in
-                            store.rename(item, to: newTitle)
-                        },
-                        onDragChanged: { translation in
-                            handleDragChanged(for: item.id, translation: translation)
-                        },
-                        onDragEnded: { translation in
-                            commitDrag(for: item.id, translation: translation)
-                        }
-                    )
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                ForEach(entries) { entry in
+                    entryView(for: entry)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
             .padding(.horizontal, 12)
@@ -296,9 +348,101 @@ struct ContentView: View {
             }
             .onChange(of: store.selectedListID) {
                 cancelDrag()
+                addingSubtaskFor = nil
             }
         }
         .frame(maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private func entryView(for entry: TaskEntry) -> some View {
+        switch entry {
+        case .parent(let item):
+            parentRow(item)
+        case .child(let item, let parentID):
+            childRow(item, parentID: parentID)
+        case .addSubtask(let parentID):
+            AddSubtaskRow(
+                parentID: parentID,
+                onSubmit: { title in
+                    withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                        store.addSubtask(title: title, parentID: parentID)
+                    }
+                },
+                onDismiss: {
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        addingSubtaskFor = nil
+                    }
+                },
+                yOffset: offsetForAddSubtask(parentID: parentID)
+            )
+        }
+    }
+
+    private func parentRow(_ item: TodoItem) -> some View {
+        TodoRowView(
+            item: item,
+            isDragging: draggingID == item.id,
+            isDragActive: draggingID != nil,
+            yOffset: offsetForParent(id: item.id),
+            depth: 0,
+            onToggle: {
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                    store.toggle(item)
+                }
+            },
+            onDelete: {
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                    if addingSubtaskFor == item.id {
+                        addingSubtaskFor = nil
+                    }
+                    store.delete(item)
+                }
+            },
+            onRename: { newTitle in
+                store.rename(item, to: newTitle)
+            },
+            onAddSubtask: {
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.84)) {
+                    addingSubtaskFor = item.id
+                }
+            },
+            onDragChanged: { translation in
+                handleParentDragChanged(for: item.id, translation: translation)
+            },
+            onDragEnded: { translation in
+                commitParentDrag(for: item.id, translation: translation)
+            }
+        )
+    }
+
+    private func childRow(_ item: TodoItem, parentID: UUID) -> some View {
+        TodoRowView(
+            item: item,
+            isDragging: draggingID == item.id,
+            isDragActive: draggingID != nil,
+            yOffset: offsetForChild(id: item.id, parentID: parentID),
+            depth: 1,
+            onToggle: {
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                    store.toggle(item)
+                }
+            },
+            onDelete: {
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                    store.delete(item)
+                }
+            },
+            onRename: { newTitle in
+                store.rename(item, to: newTitle)
+            },
+            onDragChanged: { translation in
+                handleChildDragChanged(for: item.id, parentID: parentID, translation: translation)
+            },
+            onDragEnded: { translation in
+                commitChildDrag(for: item.id, parentID: parentID, translation: translation)
+            }
+        )
     }
 
     private var inputBar: some View {
@@ -406,13 +550,124 @@ struct ContentView: View {
         store.visibleItems
     }
 
-    private func targetIndex(from original: Int, offset: CGFloat, in order: [TodoItem]) -> Int {
+    private var currentEntries: [TaskEntry] {
+        guard let listID = store.selectedListID else { return [] }
+        var entries: [TaskEntry] = []
+        for parent in store.topLevelItems(in: listID) {
+            entries.append(.parent(parent))
+            for child in store.children(of: parent.id) {
+                entries.append(.child(child, parentID: parent.id))
+            }
+            if addingSubtaskFor == parent.id {
+                entries.append(.addSubtask(parentID: parent.id))
+            }
+        }
+        return entries
+    }
+
+    // MARK: - Parent drag
+
+    private func handleParentDragChanged(for id: UUID, translation: CGFloat) {
+        guard let listID = store.selectedListID else { return }
+        let topLevel = store.topLevelItems(in: listID).map(\.id)
+        if draggingID == nil {
+            draggingID = id
+            draggingChildParentID = nil
+            lastTargetIndex = topLevel.firstIndex(of: id)
+            fireHaptic(.levelChange)
+            installEscapeMonitor()
+        }
+        dragOffset = translation
+        guard let original = topLevel.firstIndex(of: id) else { return }
+        let target = topLevelTargetIndex(from: original, offset: translation, in: topLevel)
+        if target != lastTargetIndex {
+            lastTargetIndex = target
+            fireHaptic(.alignment)
+        }
+    }
+
+    private func commitParentDrag(for id: UUID, translation: CGFloat) {
+        guard draggingID == id, draggingChildParentID == nil else {
+            removeEscapeMonitor()
+            lastTargetIndex = nil
+            return
+        }
+        guard let listID = store.selectedListID else { return }
+        let topLevel = store.topLevelItems(in: listID).map(\.id)
+        let original = topLevel.firstIndex(of: id) ?? 0
+        let target = topLevelTargetIndex(from: original, offset: translation, in: topLevel)
+        withAnimation(Self.reorderAnimation) {
+            if target != original {
+                store.moveTopLevel(from: original, to: target)
+            }
+            dragOffset = 0
+            draggingID = nil
+            draggingChildParentID = nil
+        }
+        lastTargetIndex = nil
+        removeEscapeMonitor()
+    }
+
+    // MARK: - Child drag
+
+    private func handleChildDragChanged(for id: UUID, parentID: UUID, translation: CGFloat) {
+        let siblings = store.children(of: parentID).map(\.id)
+        if draggingID == nil {
+            draggingID = id
+            draggingChildParentID = parentID
+            lastTargetIndex = siblings.firstIndex(of: id)
+            fireHaptic(.levelChange)
+            installEscapeMonitor()
+        }
+        dragOffset = translation
+        guard let original = siblings.firstIndex(of: id) else { return }
+        let target = childTargetIndex(from: original, offset: translation, in: siblings)
+        if target != lastTargetIndex {
+            lastTargetIndex = target
+            fireHaptic(.alignment)
+        }
+    }
+
+    private func commitChildDrag(for id: UUID, parentID: UUID, translation: CGFloat) {
+        guard draggingID == id, draggingChildParentID == parentID else {
+            removeEscapeMonitor()
+            lastTargetIndex = nil
+            return
+        }
+        let siblings = store.children(of: parentID).map(\.id)
+        let original = siblings.firstIndex(of: id) ?? 0
+        let target = childTargetIndex(from: original, offset: translation, in: siblings)
+        withAnimation(Self.reorderAnimation) {
+            if target != original {
+                store.moveChild(parentID: parentID, from: original, to: target)
+            }
+            dragOffset = 0
+            draggingID = nil
+            draggingChildParentID = nil
+        }
+        lastTargetIndex = nil
+        removeEscapeMonitor()
+    }
+
+    private func cancelDrag() {
+        withAnimation(Self.reorderAnimation) {
+            dragOffset = 0
+            draggingID = nil
+            draggingChildParentID = nil
+        }
+        lastTargetIndex = nil
+        removeEscapeMonitor()
+    }
+
+    // MARK: - Drag math helpers
+
+    private func topLevelTargetIndex(from original: Int, offset: CGFloat, in order: [UUID]) -> Int {
         guard !order.isEmpty else { return 0 }
         var idx = original
         var accumulated: CGFloat = 0
         if offset > 0 {
             for i in (original + 1)..<order.count {
-                let h = rowHeights[order[i].id] ?? RowMetrics.estimatedHeight
+                let h = blockHeight(for: order[i])
                 accumulated += h
                 if offset > accumulated - h / 2 {
                     idx = i
@@ -422,7 +677,7 @@ struct ContentView: View {
             }
         } else if offset < 0 {
             for i in stride(from: original - 1, through: 0, by: -1) {
-                let h = rowHeights[order[i].id] ?? RowMetrics.estimatedHeight
+                let h = blockHeight(for: order[i])
                 accumulated += h
                 if -offset > accumulated - h / 2 {
                     idx = i
@@ -434,7 +689,54 @@ struct ContentView: View {
         return idx
     }
 
-    private func yPosition(for index: Int, in order: [UUID]) -> CGFloat {
+    private func childTargetIndex(from original: Int, offset: CGFloat, in order: [UUID]) -> Int {
+        guard !order.isEmpty else { return 0 }
+        var idx = original
+        var accumulated: CGFloat = 0
+        if offset > 0 {
+            for i in (original + 1)..<order.count {
+                let h = rowHeights[order[i]] ?? RowMetrics.estimatedHeight
+                accumulated += h
+                if offset > accumulated - h / 2 {
+                    idx = i
+                } else {
+                    break
+                }
+            }
+        } else if offset < 0 {
+            for i in stride(from: original - 1, through: 0, by: -1) {
+                let h = rowHeights[order[i]] ?? RowMetrics.estimatedHeight
+                accumulated += h
+                if -offset > accumulated - h / 2 {
+                    idx = i
+                } else {
+                    break
+                }
+            }
+        }
+        return idx
+    }
+
+    private func blockHeight(for parentID: UUID) -> CGFloat {
+        var h = rowHeights[parentID] ?? RowMetrics.estimatedHeight
+        for child in store.children(of: parentID) {
+            h += rowHeights[child.id] ?? RowMetrics.estimatedHeight
+        }
+        if addingSubtaskFor == parentID {
+            h += AddSubtaskRow.estimatedHeight
+        }
+        return h
+    }
+
+    private func topLevelYPosition(for index: Int, in order: [UUID]) -> CGFloat {
+        var y: CGFloat = 0
+        for i in 0..<index {
+            y += blockHeight(for: order[i])
+        }
+        return y
+    }
+
+    private func childYPosition(for index: Int, in order: [UUID]) -> CGFloat {
         var y: CGFloat = 0
         for i in 0..<index {
             y += rowHeights[order[i]] ?? RowMetrics.estimatedHeight
@@ -442,72 +744,52 @@ struct ContentView: View {
         return y
     }
 
-    private func visualOffset(for index: Int, in visible: [TodoItem]) -> CGFloat {
-        guard let dragID = draggingID,
-              let originalIdx = visible.firstIndex(where: { $0.id == dragID }) else {
+    private func offsetForParent(id: UUID) -> CGFloat {
+        guard let draggingID else { return 0 }
+        if draggingChildParentID != nil {
             return 0
         }
-        if index == originalIdx {
-            return dragOffset
-        }
-        let target = targetIndex(from: originalIdx, offset: dragOffset, in: visible)
+        if id == draggingID { return dragOffset }
+        guard let listID = store.selectedListID else { return 0 }
+        let order = store.topLevelItems(in: listID).map(\.id)
+        guard let originalIdx = order.firstIndex(of: draggingID),
+              let myIdx = order.firstIndex(of: id) else { return 0 }
+        let target = topLevelTargetIndex(from: originalIdx, offset: dragOffset, in: order)
         if target == originalIdx { return 0 }
 
-        let currentOrder = visible.map(\.id)
-        var newOrder = currentOrder
-        let draggedID = newOrder.remove(at: originalIdx)
-        newOrder.insert(draggedID, at: target)
-
-        let rowID = currentOrder[index]
-        guard let newIdx = newOrder.firstIndex(of: rowID) else { return 0 }
-
-        return yPosition(for: newIdx, in: newOrder) - yPosition(for: index, in: currentOrder)
+        var newOrder = order
+        newOrder.remove(at: originalIdx)
+        newOrder.insert(draggingID, at: target)
+        guard let newIdx = newOrder.firstIndex(of: id) else { return 0 }
+        return topLevelYPosition(for: newIdx, in: newOrder) - topLevelYPosition(for: myIdx, in: order)
     }
 
-    private func handleDragChanged(for id: UUID, translation: CGFloat) {
-        let visible = sortedItems
-        if draggingID == nil {
-            draggingID = id
-            lastTargetIndex = visible.firstIndex(where: { $0.id == id })
-            fireHaptic(.levelChange)
-            installEscapeMonitor()
-        }
-        dragOffset = translation
-        guard let original = visible.firstIndex(where: { $0.id == id }) else { return }
-        let target = targetIndex(from: original, offset: translation, in: visible)
-        if target != lastTargetIndex {
-            lastTargetIndex = target
-            fireHaptic(.alignment)
+    private func offsetForChild(id: UUID, parentID: UUID) -> CGFloat {
+        guard let draggingID else { return 0 }
+        if let childParent = draggingChildParentID {
+            // Child drag
+            if id == draggingID { return dragOffset }
+            guard childParent == parentID else { return 0 }
+            let order = store.children(of: parentID).map(\.id)
+            guard let originalIdx = order.firstIndex(of: draggingID),
+                  let myIdx = order.firstIndex(of: id) else { return 0 }
+            let target = childTargetIndex(from: originalIdx, offset: dragOffset, in: order)
+            if target == originalIdx { return 0 }
+            var newOrder = order
+            newOrder.remove(at: originalIdx)
+            newOrder.insert(draggingID, at: target)
+            guard let newIdx = newOrder.firstIndex(of: id) else { return 0 }
+            return childYPosition(for: newIdx, in: newOrder) - childYPosition(for: myIdx, in: order)
+        } else {
+            // Parent drag — child follows its parent's shift
+            return offsetForParent(id: parentID)
         }
     }
 
-    private func commitDrag(for id: UUID, translation: CGFloat) {
-        guard draggingID == id else {
-            removeEscapeMonitor()
-            lastTargetIndex = nil
-            return
-        }
-        let visible = sortedItems
-        let original = visible.firstIndex(where: { $0.id == id }) ?? 0
-        let target = targetIndex(from: original, offset: translation, in: visible)
-        withAnimation(Self.reorderAnimation) {
-            if target != original {
-                store.move(from: original, to: target)
-            }
-            dragOffset = 0
-            draggingID = nil
-        }
-        lastTargetIndex = nil
-        removeEscapeMonitor()
-    }
-
-    private func cancelDrag() {
-        withAnimation(Self.reorderAnimation) {
-            dragOffset = 0
-            draggingID = nil
-        }
-        lastTargetIndex = nil
-        removeEscapeMonitor()
+    private func offsetForAddSubtask(parentID: UUID) -> CGFloat {
+        guard draggingID != nil else { return 0 }
+        if draggingChildParentID != nil { return 0 }
+        return offsetForParent(id: parentID)
     }
 
     private func targetListIndex(from original: Int, offset: CGFloat, in order: [TodoList]) -> Int {
