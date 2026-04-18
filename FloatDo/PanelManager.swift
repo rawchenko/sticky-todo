@@ -114,6 +114,13 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     private var pendingSnapWorkItem: DispatchWorkItem?
     private var pendingHoverWorkItem: DispatchWorkItem?
     private var isPointerInsidePanel = false
+    private var outsideClickMonitor: Any?
+
+    deinit {
+        if let outsideClickMonitor {
+            NSEvent.removeMonitor(outsideClickMonitor)
+        }
+    }
 
     func setup<Content: View>(contentView: Content) {
         let panel = KeyablePanel(
@@ -148,6 +155,27 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
 
         self.panel = panel
         positionInCorner(.topRight)
+        installOutsideClickMonitor()
+    }
+
+    private func installOutsideClickMonitor() {
+        guard outsideClickMonitor == nil else { return }
+        outsideClickMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] event in
+            self?.resignIfClickOutsideFieldEditor(event: event)
+            return event
+        }
+    }
+
+    private func resignIfClickOutsideFieldEditor(event: NSEvent) {
+        guard let panel,
+              event.window === panel,
+              let textView = panel.firstResponder as? NSTextView else { return }
+        let localPoint = textView.convert(event.locationInWindow, from: nil)
+        if !textView.bounds.contains(localPoint) {
+            panel.makeFirstResponder(nil)
+        }
     }
 
     func showPanel() {
@@ -169,6 +197,7 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
 
     func collapse() {
         guard panel != nil, !isCollapsed else { return }
+        panel?.makeFirstResponder(nil)
         withAnimation(PanelMotion.stateAnimation) {
             isCollapsed = true
         }

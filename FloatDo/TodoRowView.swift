@@ -67,9 +67,17 @@ struct TodoRowView: View {
 
     @State private var isHovering = false
     @State private var didPushCursor = false
-    @State private var isEditing = false
     @State private var draftTitle = ""
     @FocusState private var isEditorFocused: Bool
+
+    private var showsStrikethroughOverlay: Bool {
+        item.isCompleted && !isEditorFocused
+    }
+
+    private var titleColor: Color {
+        if showsStrikethroughOverlay { return .clear }
+        return item.isCompleted ? FloatDoTheme.textSecondary : FloatDoTheme.textPrimary
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -81,26 +89,30 @@ struct TodoRowView: View {
             }
             .toggleStyle(TodoCheckboxToggleStyle())
 
-            if isEditing {
+            ZStack(alignment: .topLeading) {
                 TextField("Task", text: $draftTitle, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: 14))
-                    .foregroundStyle(FloatDoTheme.textPrimary)
+                    .foregroundStyle(titleColor)
                     .lineLimit(1...5)
                     .focused($isEditorFocused)
-                    .onSubmit(commitEdit)
+                    .onSubmit { isEditorFocused = false }
                     .onExitCommand(perform: cancelEdit)
-                    .frame(maxWidth: .infinity, minHeight: 18, alignment: .topLeading)
-            } else {
-                Text(item.title)
-                    .font(.system(size: 14))
-                    .strikethrough(item.isCompleted)
-                    .foregroundStyle(item.isCompleted ? FloatDoTheme.textSecondary : FloatDoTheme.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(minHeight: 18, alignment: .topLeading)
-                    .pointerCursor(.iBeam, active: !isDragActive)
-                    .onTapGesture(perform: beginEdit)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                if showsStrikethroughOverlay {
+                    Text(item.title)
+                        .font(.system(size: 14))
+                        .strikethrough(true)
+                        .foregroundStyle(FloatDoTheme.textSecondary)
+                        .lineLimit(1...5)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .allowsHitTesting(false)
+                }
             }
+            .frame(minHeight: 18, alignment: .topLeading)
+            .pointerCursor(.iBeam, active: !isDragActive)
 
             Spacer(minLength: 4)
 
@@ -113,9 +125,9 @@ struct TodoRowView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .pointerCursor(.pointingHand, active: isHovering && !isDragActive && !isEditing)
-                .opacity(isHovering && !isDragActive && !isEditing ? 1 : 0)
-                .allowsHitTesting(isHovering && !isDragActive && !isEditing)
+                .pointerCursor(.pointingHand, active: isHovering && !isDragActive && !isEditorFocused)
+                .opacity(isHovering && !isDragActive && !isEditorFocused ? 1 : 0)
+                .allowsHitTesting(isHovering && !isDragActive && !isEditorFocused)
             }
 
             Button(action: onDelete) {
@@ -126,9 +138,9 @@ struct TodoRowView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .pointerCursor(.pointingHand, active: isHovering && !isDragActive && !isEditing)
-            .opacity(isHovering && !isDragActive && !isEditing ? 1 : 0)
-            .allowsHitTesting(isHovering && !isDragActive && !isEditing)
+            .pointerCursor(.pointingHand, active: isHovering && !isDragActive && !isEditorFocused)
+            .opacity(isHovering && !isDragActive && !isEditorFocused ? 1 : 0)
+            .allowsHitTesting(isHovering && !isDragActive && !isEditorFocused)
         }
         .padding(.leading, depth > 0 ? 34 : 12)
         .padding(.trailing, 12)
@@ -162,9 +174,11 @@ struct TodoRowView: View {
             }
         }
         .onChange(of: isEditorFocused) { _, focused in
-            if !focused && isEditing {
-                commitEdit()
-            }
+            if !focused { commitEdit() }
+        }
+        .task(id: item.id) { draftTitle = item.title }
+        .onChange(of: item.title) { _, new in
+            if !isEditorFocused { draftTitle = new }
         }
         .gesture(
             DragGesture(minimumDistance: 8, coordinateSpace: .named("list"))
@@ -182,28 +196,23 @@ struct TodoRowView: View {
                     }
                     onDragEnded(value.translation.height)
                 },
-            including: isEditing ? .subviews : .all
+            including: isEditorFocused ? .subviews : .all
         )
     }
 
-    private func beginEdit() {
-        draftTitle = item.title
-        isEditing = true
-        isEditorFocused = true
-    }
-
     private func commitEdit() {
-        guard isEditing else { return }
         let trimmed = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty && trimmed != item.title {
+        if trimmed.isEmpty {
+            draftTitle = item.title
+            return
+        }
+        if trimmed != item.title {
             onRename(trimmed)
         }
-        isEditing = false
-        isEditorFocused = false
     }
 
     private func cancelEdit() {
-        isEditing = false
+        draftTitle = item.title
         isEditorFocused = false
     }
 
