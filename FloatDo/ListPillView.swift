@@ -37,6 +37,7 @@ struct ListPillView: View {
     @State private var isPressed = false
     @State private var isShowingIconPicker = false
     @State private var didPushCursor = false
+    @State private var didPushHoverCursor = false
     @FocusState private var isEditorFocused: Bool
 
     var body: some View {
@@ -94,6 +95,10 @@ struct ListPillView: View {
         .animation(PillMotion.drag, value: isDragging)
         .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .help(list.name)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(list.icon) \(list.name)")
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityHint("Double-tap to select. Right-click for options.")
         .onTapGesture(count: 2, perform: beginEdit)
         .onTapGesture(count: 1) {
             guard !isEditing else { return }
@@ -105,6 +110,10 @@ struct ListPillView: View {
         .gesture(
             DragGesture(minimumDistance: 6, coordinateSpace: .named("lists"))
                 .onChanged { value in
+                    if didPushHoverCursor {
+                        NSCursor.pop()
+                        didPushHoverCursor = false
+                    }
                     if !didPushCursor {
                         NSCursor.closedHand.push()
                         didPushCursor = true
@@ -140,10 +149,14 @@ struct ListPillView: View {
             guard !isDragActive else { return }
             isHovering = hovering
             if !hovering { isPressed = false }
-            if hovering && !isEditing {
-                NSCursor.openHand.set()
-            } else if !hovering && !isEditing {
-                NSCursor.arrow.set()
+
+            let shouldShow = hovering && !isEditing
+            if shouldShow && !didPushHoverCursor {
+                NSCursor.openHand.push()
+                didPushHoverCursor = true
+            } else if !shouldShow && didPushHoverCursor {
+                NSCursor.pop()
+                didPushHoverCursor = false
             }
         }
         .onChange(of: isDragActive) { _, active in
@@ -155,6 +168,22 @@ struct ListPillView: View {
             if autoFocusOnAppear {
                 beginEdit()
                 onAutoFocusConsumed()
+            }
+        }
+        .onDisappear {
+            if didPushCursor {
+                NSCursor.pop()
+                didPushCursor = false
+            }
+            if didPushHoverCursor {
+                NSCursor.pop()
+                didPushHoverCursor = false
+            }
+        }
+        .onChange(of: isEditing) { _, editing in
+            if editing && didPushHoverCursor {
+                NSCursor.pop()
+                didPushHoverCursor = false
             }
         }
         .onChange(of: isEditorFocused) { _, focused in
@@ -263,6 +292,9 @@ private struct EmojiCell: View {
             .animation(PillMotion.press, value: isPressed)
             .animation(PillMotion.selection, value: isSelected)
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(emoji)
+            .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
             .onHover { hovering in
                 isHovering = hovering
                 if !hovering { isPressed = false }

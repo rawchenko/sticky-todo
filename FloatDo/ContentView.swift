@@ -175,6 +175,9 @@ struct ContentView: View {
                         .onChange(of: store.lists.map(\.id)) { _, ids in
                             let live = Set(ids)
                             listWidths = listWidths.filter { live.contains($0.key) }
+                            if let pending = pendingAutoFocusListID, !live.contains(pending) {
+                                pendingAutoFocusListID = nil
+                            }
                         }
                         .animation(.spring(response: 0.42, dampingFraction: 0.82), value: store.lists.map(\.id))
                         .animation(.spring(response: 0.36, dampingFraction: 0.82), value: store.selectedListID)

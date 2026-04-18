@@ -33,6 +33,10 @@ struct TodoList: Identifiable, Codable, Equatable {
 
         let decoded = try container.decodeIfPresent(String.self, forKey: .icon)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        icon = (decoded?.isEmpty == false) ? decoded! : TodoList.defaultIcon
+        if let decoded, !decoded.isEmpty {
+            icon = decoded
+        } else {
+            icon = TodoList.defaultIcon
+        }
     }
 }

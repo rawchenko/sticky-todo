@@ -221,6 +221,75 @@ final class TodoStoreTests: XCTestCase {
         XCTAssertEqual(store.visibleItems.map(\.title), ["B", "C", "A"])
     }
 
+    func testDecodeListWithMissingIconUsesDefault() throws {
+        let id = UUID()
+        let createdAt = Date(timeIntervalSinceReferenceDate: 700_000_000)
+        let ts = createdAt.timeIntervalSinceReferenceDate
+
+        let payloads = [
+            #"{"id":"\#(id.uuidString)","name":"Work","createdAt":\#(ts)}"#,
+            #"{"id":"\#(id.uuidString)","name":"Work","icon":"","createdAt":\#(ts)}"#,
+            #"{"id":"\#(id.uuidString)","name":"Work","icon":"   \t  ","createdAt":\#(ts)}"#
+        ]
+
+        for json in payloads {
+            let data = Data(json.utf8)
+            let decoded = try JSONDecoder().decode(TodoList.self, from: data)
+            XCTAssertEqual(decoded.icon, TodoList.defaultIcon)
+            XCTAssertEqual(decoded.name, "Work")
+            XCTAssertEqual(decoded.id, id)
+        }
+    }
+
+    func testMoveListReordersLists() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        _ = store.addList(name: "A")
+        _ = store.addList(name: "B")
+        _ = store.addList(name: "C")
+
+        store.moveList(from: 0, to: 2)
+        XCTAssertEqual(store.lists.map(\.name), ["B", "C", "A"])
+
+        store.moveList(from: 2, to: 0)
+        XCTAssertEqual(store.lists.map(\.name), ["A", "B", "C"])
+    }
+
+    func testMoveListWithInvalidIndicesIsNoop() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        _ = store.addList(name: "A")
+        _ = store.addList(name: "B")
+        let originalOrder = store.lists.map(\.name)
+
+        store.moveList(from: 0, to: 0)
+        XCTAssertEqual(store.lists.map(\.name), originalOrder)
+
+        store.moveList(from: 5, to: 0)
+        XCTAssertEqual(store.lists.map(\.name), originalOrder)
+
+        store.moveList(from: 0, to: 5)
+        XCTAssertEqual(store.lists.map(\.name), originalOrder)
+
+        store.moveList(from: -1, to: 0)
+        XCTAssertEqual(store.lists.map(\.name), originalOrder)
+    }
+
+    func testSetListIconRejectsEmpty() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        let list = store.addList(name: "Work", icon: "🚀")
+
+        store.setListIcon(list, to: "")
+        XCTAssertEqual(store.lists.first?.icon, "🚀")
+
+        store.setListIcon(list, to: "   \n\t  ")
+        XCTAssertEqual(store.lists.first?.icon, "🚀")
+
+        store.setListIcon(list, to: "🎯")
+        XCTAssertEqual(store.lists.first?.icon, "🎯")
+    }
+
     private func makeStoreFileURL() throws -> URL {
         let directoryURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("FloatDoTests-\(UUID().uuidString)", isDirectory: true)
