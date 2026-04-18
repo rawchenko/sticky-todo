@@ -7,8 +7,19 @@ struct TodoStoreRecoveryNotice: Identifiable, Equatable {
     let backupURL: URL?
 }
 
+struct TodoStoreFile: Codable {
+    var schemaVersion: Int
+    var lists: [TodoList]
+    var todos: [TodoItem]
+    var selectedListID: UUID?
+}
+
 class TodoStore: ObservableObject {
+    static let currentSchemaVersion = 2
+
     @Published var items: [TodoItem] = []
+    @Published var lists: [TodoList] = []
+    @Published var selectedListID: UUID?
     @Published var recoveryNotice: TodoStoreRecoveryNotice?
 
     private let fileURL: URL
@@ -23,9 +34,16 @@ class TodoStore: ObservableObject {
         load()
     }
 
+    var visibleItems: [TodoItem] {
+        guard let id = selectedListID else { return [] }
+        return items.filter { $0.listID == id }
+    }
+
     func load() {
         guard fileManager.fileExists(atPath: fileURL.path) else {
             items = []
+            lists = []
+            selectedListID = nil
             isStorageWritable = true
             recoveryNotice = nil
             return
@@ -33,9 +51,18 @@ class TodoStore: ObservableObject {
 
         do {
             let data = try Data(contentsOf: fileURL)
-            items = try JSONDecoder().decode([TodoItem].self, from: data)
-            isStorageWritable = true
-            recoveryNotice = nil
+
+            if let file = try? JSONDecoder().decode(TodoStoreFile.self, from: data) {
+                lists = file.lists
+                items = file.todos
+                selectedListID = file.selectedListID ?? file.lists.first?.id
+                isStorageWritable = true
+                recoveryNotice = nil
+                return
+            }
+
+            let legacyItems = try JSONDecoder().decode([TodoItem].self, from: data)
+            migrateFromLegacy(legacyItems)
         } catch {
             recoverUnreadableStore(after: error)
         }
@@ -43,14 +70,23 @@ class TodoStore: ObservableObject {
 
     func save() {
         guard isStorageWritable else { return }
-        guard let data = try? JSONEncoder().encode(items) else { return }
+        let file = TodoStoreFile(
+            schemaVersion: Self.currentSchemaVersion,
+            lists: lists,
+            todos: items,
+            selectedListID: selectedListID
+        )
+        guard let data = try? JSONEncoder().encode(file) else { return }
         try? data.write(to: fileURL, options: .atomic)
     }
+
+    // MARK: - Todos
 
     func add(title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        items.append(TodoItem(title: trimmed))
+        guard let listID = selectedListID else { return }
+        items.append(TodoItem(title: trimmed, listID: listID))
         save()
     }
 
@@ -74,12 +110,101 @@ class TodoStore: ObservableObject {
         save()
     }
 
+    /// Reorder a todo within the currently selected list. Indices refer to positions
+    /// in the filtered `visibleItems` slice.
     func move(from: Int, to: Int) {
-        guard items.indices.contains(from),
-              to >= 0, to < items.count,
+        guard let listID = selectedListID else { return }
+        let visibleIndices = items.indices.filter { items[$0].listID == listID }
+        guard visibleIndices.indices.contains(from),
+              visibleIndices.indices.contains(to),
               from != to else { return }
-        let item = items.remove(at: from)
-        items.insert(item, at: to)
+
+        let sourceAbsolute = visibleIndices[from]
+        let moved = items.remove(at: sourceAbsolute)
+
+        let remainingVisible = items.indices.filter { items[$0].listID == listID }
+        let destinationAbsolute: Int
+        if to >= remainingVisible.count {
+            destinationAbsolute = (remainingVisible.last ?? (sourceAbsolute - 1)) + 1
+        } else {
+            destinationAbsolute = remainingVisible[to]
+        }
+
+        items.insert(moved, at: destinationAbsolute)
+        save()
+    }
+
+    // MARK: - Lists
+
+    @discardableResult
+    func addList(name: String, icon: String = TodoList.defaultIcon) -> TodoList {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalName = trimmed.isEmpty ? TodoList.defaultName : trimmed
+        let trimmedIcon = icon.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalIcon = trimmedIcon.isEmpty ? TodoList.defaultIcon : trimmedIcon
+        let list = TodoList(name: finalName, icon: finalIcon)
+        lists.append(list)
+        selectedListID = list.id
+        save()
+        return list
+    }
+
+    func renameList(_ list: TodoList, to newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard let idx = lists.firstIndex(where: { $0.id == list.id }) else { return }
+        guard lists[idx].name != trimmed else { return }
+        lists[idx].name = trimmed
+        save()
+    }
+
+    func setListIcon(_ list: TodoList, to icon: String) {
+        let trimmed = icon.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard let idx = lists.firstIndex(where: { $0.id == list.id }) else { return }
+        guard lists[idx].icon != trimmed else { return }
+        lists[idx].icon = trimmed
+        save()
+    }
+
+    func deleteList(_ list: TodoList) {
+        guard let idx = lists.firstIndex(where: { $0.id == list.id }) else { return }
+        items.removeAll { $0.listID == list.id }
+        lists.remove(at: idx)
+        if selectedListID == list.id {
+            selectedListID = lists.first?.id
+        }
+        save()
+    }
+
+    func moveList(from: Int, to: Int) {
+        guard lists.indices.contains(from),
+              to >= 0, to < lists.count,
+              from != to else { return }
+        let list = lists.remove(at: from)
+        lists.insert(list, at: to)
+        save()
+    }
+
+    func selectList(_ id: UUID?) {
+        guard selectedListID != id else { return }
+        selectedListID = id
+        save()
+    }
+
+    // MARK: - Migration / recovery
+
+    private func migrateFromLegacy(_ legacyItems: [TodoItem]) {
+        let defaultList = TodoList(name: "Tasks")
+        lists = [defaultList]
+        items = legacyItems.map { item in
+            var copy = item
+            copy.listID = defaultList.id
+            return copy
+        }
+        selectedListID = defaultList.id
+        isStorageWritable = true
+        recoveryNotice = nil
         save()
     }
 
@@ -89,6 +214,8 @@ class TodoStore: ObservableObject {
         do {
             try fileManager.moveItem(at: fileURL, to: backupURL)
             items = []
+            lists = []
+            selectedListID = nil
             isStorageWritable = true
             recoveryNotice = TodoStoreRecoveryNotice(
                 message: "Your todo file was unreadable. A backup was saved and the list was reset.",
@@ -96,6 +223,8 @@ class TodoStore: ObservableObject {
             )
         } catch {
             items = []
+            lists = []
+            selectedListID = nil
             isStorageWritable = false
             recoveryNotice = TodoStoreRecoveryNotice(
                 message: "Your todo file was unreadable and could not be moved to a backup. Saving is paused to avoid overwriting it.",
