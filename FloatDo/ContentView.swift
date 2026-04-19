@@ -133,13 +133,11 @@ struct ContentView: View {
     var body: some View {
         GeometryReader { proxy in
             let shape = MorphingDockedShape(
-                corner: panelManager.currentCorner,
                 expansion: expansionProgress,
-                floatingProgress: panelManager.isDragging ? 1 : 0,
                 panelRadius: PanelMetrics.cornerRadius
             )
 
-            ZStack(alignment: panelManager.currentCorner.alignment) {
+            ZStack(alignment: panelManager.currentAnchor.edge.alignment) {
                 PanelGlassBackground(shape: shape)
                     .allowsHitTesting(false)
 
@@ -153,14 +151,14 @@ struct ContentView: View {
             .frame(
                 width: proxy.size.width,
                 height: proxy.size.height,
-                alignment: panelManager.currentCorner.alignment
+                alignment: panelManager.currentAnchor.edge.alignment
             )
             .clipShape(shape)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.clear)
         .animation(PanelMotion.stateAnimation, value: panelManager.isCollapsed)
-        .animation(PanelMotion.stateAnimation, value: panelManager.currentCorner)
+        .animation(PanelMotion.stateAnimation, value: panelManager.currentAnchor)
         .animation(PanelMotion.stateAnimation, value: panelManager.isDragging)
         .onDisappear {
             removeEscapeMonitor()
@@ -171,7 +169,7 @@ struct ContentView: View {
     private var expandedLayer: some View {
         expandedContent
             .opacity(expandedOpacity)
-            .scaleEffect(expandedScale, anchor: panelManager.currentCorner.unitPoint)
+            .scaleEffect(expandedScale, anchor: panelManager.currentAnchor.edge.unitPoint)
             .allowsHitTesting(expansionProgress > 0.72)
             .accessibilityHidden(expansionProgress < 0.3)
     }
@@ -496,7 +494,7 @@ struct ContentView: View {
             .foregroundStyle(FloatDoTheme.textPrimary)
             .frame(width: PanelMetrics.collapsedSize.width, height: PanelMetrics.collapsedSize.height)
             .opacity(collapsedOpacity)
-            .scaleEffect(collapsedScale, anchor: panelManager.currentCorner.unitPoint)
+            .scaleEffect(collapsedScale, anchor: panelManager.currentAnchor.edge.unitPoint)
             .offset(collapsedOffset)
             .allowsHitTesting(false)
             .accessibilityHidden(expansionProgress > 0.7)
@@ -532,18 +530,7 @@ struct ContentView: View {
     }
 
     private var transitionOffset: CGSize {
-        let distance = PanelMotion.transitionDistance
-
-        switch panelManager.currentCorner {
-        case .topLeft:
-            return CGSize(width: -distance, height: -distance)
-        case .topRight:
-            return CGSize(width: distance, height: -distance)
-        case .bottomLeft:
-            return CGSize(width: -distance, height: distance)
-        case .bottomRight:
-            return CGSize(width: distance, height: distance)
-        }
+        panelManager.currentAnchor.edge.transitionOffset
     }
 
     private var sortedItems: [TodoItem] {

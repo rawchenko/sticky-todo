@@ -52,60 +52,71 @@ final class HoverTrackingHostingView<Content: View>: NSHostingView<Content> {
     }
 }
 
-enum ScreenCorner {
-    case topLeft, topRight, bottomLeft, bottomRight
+enum ScreenEdge: String, Codable {
+    case left, right
 }
 
-extension ScreenCorner {
-    var isTop: Bool {
-        switch self {
-        case .topLeft, .topRight:
-            return true
-        case .bottomLeft, .bottomRight:
-            return false
-        }
-    }
-
-    var isRight: Bool {
-        switch self {
-        case .topRight, .bottomRight:
-            return true
-        case .topLeft, .bottomLeft:
-            return false
-        }
-    }
-
+extension ScreenEdge {
+    /// SwiftUI alignment that pins child views toward the screen edge — so the
+    /// expand/collapse morph "sticks" to that edge instead of drifting inward.
     var alignment: Alignment {
         switch self {
-        case .topLeft:
-            return .topLeading
-        case .topRight:
-            return .topTrailing
-        case .bottomLeft:
-            return .bottomLeading
-        case .bottomRight:
-            return .bottomTrailing
+        case .left: return .leading
+        case .right: return .trailing
         }
     }
 
+    /// Anchor point for `scaleEffect`: scaling collapses the panel toward its
+    /// screen edge, matching the alignment.
     var unitPoint: UnitPoint {
         switch self {
-        case .topLeft:
-            return .topLeading
-        case .topRight:
-            return .topTrailing
-        case .bottomLeft:
-            return .bottomLeading
-        case .bottomRight:
-            return .bottomTrailing
+        case .left: return .leading
+        case .right: return .trailing
         }
     }
+
+    /// Direction the collapsed glyph "puffs" outward past the docked edge —
+    /// the same direction the expanded panel grew from.
+    var transitionOffset: CGSize {
+        let d = PanelMotion.transitionDistance
+        switch self {
+        case .left: return CGSize(width: -d, height: 0)
+        case .right: return CGSize(width: d, height: 0)
+        }
+    }
+}
+
+/// Which point on the panel stays fixed when the panel resizes between
+/// expanded and collapsed. Picked at drop time based on the panel's vertical
+/// position so collapsing doesn't appear to drift toward one screen edge.
+enum VerticalAnchor: String, Codable {
+    case top, center, bottom
+}
+
+struct EdgeAnchor: Equatable {
+    var edge: ScreenEdge
+    var vertical: VerticalAnchor
+    /// AppKit screen Y of the stable point (matches `vertical`):
+    /// `.top` → panel.maxY, `.center` → panel.midY, `.bottom` → panel.minY.
+    var anchorY: CGFloat
+}
+
+private struct PersistedAnchor: Codable {
+    var displayID: UInt32
+    var edge: ScreenEdge
+    var vertical: VerticalAnchor
+    var anchorY: CGFloat
+}
+
+private enum DefaultsKey {
+    static let panelAnchor = "FloatDo.panelAnchor.v2"
 }
 
 class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     private var panel: KeyablePanel?
+    private var ghostPanel: NSPanel?
     @Published var isCollapsed = true
-    @Published var currentCorner: ScreenCorner = .topRight
+    @Published var currentAnchor = EdgeAnchor(edge: .right, vertical: .top, anchorY: 0)
     @Published var isDragging = false
 
     private let expandedSize = NSSize(width: PanelMetrics.expandedSize.width, height: PanelMetrics.expandedSize.height)
@@ -114,13 +125,6 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     private var pendingSnapWorkItem: DispatchWorkItem?
     private var pendingHoverWorkItem: DispatchWorkItem?
     private var isPointerInsidePanel = false
-    private var outsideClickMonitor: Any?
-
-    deinit {
-        if let outsideClickMonitor {
-            NSEvent.removeMonitor(outsideClickMonitor)
-        }
-    }
 
     func setup<Content: View>(contentView: Content) {
         let panel = KeyablePanel(
@@ -154,28 +158,34 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
         panel.contentView = hostingView
 
         self.panel = panel
-        positionInCorner(.topRight)
-        installOutsideClickMonitor()
+        self.ghostPanel = makeGhostPanel()
+        restoreOrSetDefaultAnchor()
     }
 
-    private func installOutsideClickMonitor() {
-        guard outsideClickMonitor == nil else { return }
-        outsideClickMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.leftMouseDown, .rightMouseDown]
-        ) { [weak self] event in
-            self?.resignIfClickOutsideFieldEditor(event: event)
-            return event
-        }
-    }
-
-    private func resignIfClickOutsideFieldEditor(event: NSEvent) {
-        guard let panel,
-              event.window === panel,
-              let textView = panel.firstResponder as? NSTextView else { return }
-        let localPoint = textView.convert(event.locationInWindow, from: nil)
-        if !textView.bounds.contains(localPoint) {
-            panel.makeFirstResponder(nil)
-        }
+    private func makeGhostPanel() -> NSPanel {
+        let ghost = NSPanel(
+            contentRect: NSRect(origin: .zero, size: collapsedSize),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        // Sit just below floating so the dragged panel always covers the ghost
+        // when they overlap, but above normal app windows so the preview is
+        // still visible over other apps.
+        ghost.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue - 1)
+        ghost.isOpaque = false
+        ghost.backgroundColor = .clear
+        ghost.hasShadow = false
+        ghost.ignoresMouseEvents = true
+        ghost.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        ghost.animationBehavior = .none
+        ghost.alphaValue = 0
+        let host = NSHostingView(rootView: GhostView())
+        host.wantsLayer = true
+        host.layer?.backgroundColor = NSColor.clear.cgColor
+        host.layer?.isOpaque = false
+        ghost.contentView = host
+        return ghost
     }
 
     func showPanel() {
@@ -197,11 +207,10 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
 
     func collapse() {
         guard panel != nil, !isCollapsed else { return }
-        panel?.makeFirstResponder(nil)
         withAnimation(PanelMotion.stateAnimation) {
             isCollapsed = true
         }
-        positionInCorner(currentCorner, animated: true)
+        positionAtAnchor(currentAnchor, animated: true)
     }
 
     func expand() {
@@ -209,7 +218,7 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
         withAnimation(PanelMotion.stateAnimation) {
             isCollapsed = false
         }
-        positionInCorner(currentCorner, animated: true)
+        positionAtAnchor(currentAnchor, animated: true)
     }
 
     func toggleCollapse() {
@@ -220,35 +229,47 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
         }
     }
 
-    // MARK: - Corner snapping
+    // MARK: - Edge snapping
 
-    private func snapToNearestCorner() {
+    private func snapToNearestEdge() {
         if NSEvent.pressedMouseButtons & 1 != 0 {
-            scheduleSnapToNearestCorner()
+            scheduleSnapToNearestEdge()
             return
         }
 
         guard let panel = panel, let screen = bestScreen(for: panel.frame) ?? NSScreen.main else { return }
 
-        let frame = panel.frame
-        let screenFrame = screen.visibleFrame
-        let centerX = frame.midX
-        let centerY = frame.midY
-        let screenMidX = screenFrame.midX
-        let screenMidY = screenFrame.midY
+        let f = panel.frame
+        let v = screen.visibleFrame
 
-        let corner: ScreenCorner
-        if centerX >= screenMidX {
-            corner = centerY >= screenMidY ? .topRight : .bottomRight
-        } else {
-            corner = centerY >= screenMidY ? .topLeft : .bottomLeft
-        }
+        // Tie-break: right wins when distances are equal.
+        let distRight = v.maxX - f.maxX
+        let distLeft = f.minX - v.minX
+        let bestEdge: ScreenEdge = distRight <= distLeft ? .right : .left
 
-        currentCorner = corner
-        positionInCorner(corner, animated: true)
+        let (vertical, anchorY) = determineVerticalAnchor(panelFrame: f, visible: v)
+        let anchor = EdgeAnchor(edge: bestEdge, vertical: vertical, anchorY: anchorY)
+        positionAtAnchor(anchor, on: screen, animated: true)
+        persistAnchor(anchor, screen: screen)
+        hideGhost()
         withAnimation(PanelMotion.stateAnimation) {
             isDragging = false
         }
+    }
+
+    /// Picks the vertical anchor based on which third of the available range the
+    /// panel was dropped into — top third locks the top, bottom third locks the
+    /// bottom, middle third locks the center. Computed against the panel's
+    /// current height so it works whether the user dropped expanded or collapsed.
+    private func determineVerticalAnchor(panelFrame f: NSRect, visible v: NSRect) -> (VerticalAnchor, CGFloat) {
+        let availableRange = v.height - f.height
+        if availableRange <= 0 {
+            return (.center, f.midY)
+        }
+        let t = (f.minY - v.minY) / availableRange
+        if t > 0.66 { return (.top, f.maxY) }
+        if t < 0.33 { return (.bottom, f.minY) }
+        return (.center, f.midY)
     }
 
     func windowDidMove(_ notification: Notification) {
@@ -257,28 +278,32 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
             withAnimation(PanelMotion.stateAnimation) {
                 isDragging = true
             }
+            showGhost()
         }
-        scheduleSnapToNearestCorner()
+        updateGhostFrame()
+        scheduleSnapToNearestEdge()
     }
 
-    private func scheduleSnapToNearestCorner() {
+    private func scheduleSnapToNearestEdge() {
         pendingSnapWorkItem?.cancel()
 
         let workItem = DispatchWorkItem { [weak self] in
-            self?.snapToNearestCorner()
+            self?.snapToNearestEdge()
         }
 
         pendingSnapWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: workItem)
     }
 
-    private func positionInCorner(_ corner: ScreenCorner, animated: Bool = false) {
-        guard let panel = panel, let screen = bestScreen(for: panel.frame) ?? NSScreen.main else { return }
+    private func positionAtAnchor(_ anchor: EdgeAnchor, on screen: NSScreen? = nil, animated: Bool = false) {
+        guard let panel = panel else { return }
+        let resolvedScreen = screen ?? bestScreen(for: panel.frame) ?? NSScreen.main
+        guard let resolvedScreen else { return }
 
         pendingSnapWorkItem?.cancel()
 
-        currentCorner = corner
-        let newFrame = frame(for: corner, on: screen)
+        currentAnchor = anchor
+        let newFrame = frame(for: anchor, on: resolvedScreen)
 
         if animated {
             isProgrammaticMove = true
@@ -300,16 +325,46 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
         }
     }
 
-    private func frame(for corner: ScreenCorner, on screen: NSScreen) -> NSRect {
-        let screenFrame = screen.visibleFrame
-        let targetSize = resolvedSize(for: screenFrame)
+    private func frame(for anchor: EdgeAnchor, on screen: NSScreen, size overrideSize: NSSize? = nil) -> NSRect {
+        let visible = screen.visibleFrame
+        let size = overrideSize ?? resolvedSize(for: visible)
+        let inset = PanelMetrics.edgeInset
 
-        let origin = NSPoint(
-            x: corner.isRight ? screenFrame.maxX - targetSize.width : screenFrame.minX,
-            y: corner.isTop ? screenFrame.maxY - targetSize.height : screenFrame.minY
+        let rawMinY: CGFloat
+        switch anchor.vertical {
+        case .top:    rawMinY = anchor.anchorY - size.height
+        case .center: rawMinY = anchor.anchorY - size.height / 2
+        case .bottom: rawMinY = anchor.anchorY
+        }
+        let clampedMinY = clampPanelMinY(rawMinY, height: size.height, in: visible)
+
+        let originX: CGFloat
+        switch anchor.edge {
+        case .left:  originX = visible.minX + inset
+        case .right: originX = visible.maxX - size.width - inset
+        }
+
+        return NSRect(x: originX, y: clampedMinY, width: size.width, height: size.height)
+    }
+
+    /// Where the panel will snap to (in collapsed size) given its current
+    /// position. Used by the drag-time ghost preview.
+    private func predictedSnapFrame(for panelFrame: NSRect, on screen: NSScreen) -> NSRect {
+        let v = screen.visibleFrame
+        let bestEdge: ScreenEdge = (v.maxX - panelFrame.maxX) <= (panelFrame.minX - v.minX) ? .right : .left
+        let (vertical, anchorY) = determineVerticalAnchor(panelFrame: panelFrame, visible: v)
+        let anchor = EdgeAnchor(edge: bestEdge, vertical: vertical, anchorY: anchorY)
+        let collapsed = NSSize(
+            width: min(collapsedSize.width, v.width),
+            height: min(collapsedSize.height, v.height)
         )
+        return frame(for: anchor, on: screen, size: collapsed)
+    }
 
-        return NSRect(origin: origin, size: targetSize)
+    private func clampPanelMinY(_ minY: CGFloat, height: CGFloat, in visible: NSRect) -> CGFloat {
+        let lower = visible.minY
+        let upper = max(visible.minY, visible.maxY - height)
+        return min(max(minY, lower), upper)
     }
 
     private func resolvedSize(for screenFrame: NSRect) -> NSSize {
@@ -352,6 +407,98 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
         return (dx * dx) + (dy * dy)
     }
 
+    // MARK: - Ghost preview
+
+    private func showGhost() {
+        guard let ghost = ghostPanel, !ghost.isVisible else { return }
+        updateGhostFrame()
+        ghost.alphaValue = 0
+        ghost.orderFront(nil)
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.16
+            ghost.animator().alphaValue = 1
+        }
+    }
+
+    private func updateGhostFrame() {
+        guard let ghost = ghostPanel,
+              ghost.isVisible || isDragging,
+              let panel,
+              let screen = bestScreen(for: panel.frame) ?? NSScreen.main else { return }
+        let target = predictedSnapFrame(for: panel.frame, on: screen)
+        let current = ghost.frame
+        // Animate large jumps (edge swap, vertical-zone change) but track
+        // small continuous motion instantly so the ghost doesn't lag behind
+        // the panel during ordinary dragging.
+        let delta = max(abs(target.minX - current.minX), abs(target.minY - current.minY))
+        if delta > 24 {
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.22
+                ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.25, 1.0, 0.4, 1.0)
+                ghost.animator().setFrame(target, display: true)
+            }
+        } else {
+            ghost.setFrame(target, display: true)
+        }
+    }
+
+    private func hideGhost() {
+        guard let ghost = ghostPanel, ghost.isVisible else { return }
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.16
+            ghost.animator().alphaValue = 0
+        } completionHandler: { [weak ghost] in
+            ghost?.orderOut(nil)
+        }
+    }
+
+    // MARK: - Persistence
+
+    private func restoreOrSetDefaultAnchor() {
+        if let (persisted, screen) = loadPersistedAnchor() {
+            let anchor = EdgeAnchor(edge: persisted.edge, vertical: persisted.vertical, anchorY: persisted.anchorY)
+            positionAtAnchor(anchor, on: screen)
+            return
+        }
+        if let screen = NSScreen.main {
+            positionAtAnchor(defaultAnchor(for: screen), on: screen)
+        }
+    }
+
+    private func defaultAnchor(for screen: NSScreen) -> EdgeAnchor {
+        // Top of the right edge — matches the previous first-launch position.
+        return EdgeAnchor(edge: .right, vertical: .top, anchorY: screen.visibleFrame.maxY)
+    }
+
+    private func persistAnchor(_ anchor: EdgeAnchor, screen: NSScreen) {
+        guard let displayID = screenID(for: screen) else { return }
+        let persisted = PersistedAnchor(
+            displayID: displayID,
+            edge: anchor.edge,
+            vertical: anchor.vertical,
+            anchorY: anchor.anchorY
+        )
+        if let data = try? JSONEncoder().encode(persisted) {
+            UserDefaults.standard.set(data, forKey: DefaultsKey.panelAnchor)
+        }
+    }
+
+    private func loadPersistedAnchor() -> (PersistedAnchor, NSScreen)? {
+        guard let data = UserDefaults.standard.data(forKey: DefaultsKey.panelAnchor),
+              let persisted = try? JSONDecoder().decode(PersistedAnchor.self, from: data),
+              let screen = NSScreen.screens.first(where: { screenID(for: $0) == persisted.displayID }) else {
+            return nil
+        }
+        return (persisted, screen)
+    }
+
+    private func screenID(for screen: NSScreen) -> UInt32? {
+        let key = NSDeviceDescriptionKey("NSScreenNumber")
+        return screen.deviceDescription[key] as? UInt32
+    }
+
+    // MARK: - Hover
+
     private func handlePointerHoverChange(_ isHovered: Bool) {
         pendingHoverWorkItem?.cancel()
         isPointerInsidePanel = isHovered
@@ -389,6 +536,16 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
             expand()
         } else {
             collapse()
+        }
+    }
+}
+
+private struct GhostView: View {
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+        ZStack {
+            shape.fill(Color.white.opacity(0.08))
+            shape.strokeBorder(Color.white.opacity(0.55), lineWidth: 1.5)
         }
     }
 }

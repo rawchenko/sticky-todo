@@ -6,6 +6,7 @@ enum PanelMetrics {
     static let collapsedSize = CGSize(width: 46, height: 108)
     static let cornerRadius: CGFloat = 32
     static let shadowRadius: CGFloat = 24
+    static let edgeInset: CGFloat = 8
 }
 
 enum RowMetrics {
