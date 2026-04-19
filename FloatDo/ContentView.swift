@@ -489,8 +489,11 @@ struct ContentView: View {
     }
 
     private var collapsedGlyph: some View {
-        Image(systemName: "checklist")
-            .font(.system(size: 15, weight: .semibold))
+        Image("PanelGlyph")
+            .renderingMode(.template)
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(width: 18, height: 18)
             .foregroundStyle(FloatDoTheme.textPrimary)
             .frame(width: PanelMetrics.collapsedSize.width, height: PanelMetrics.collapsedSize.height)
             .opacity(collapsedOpacity)

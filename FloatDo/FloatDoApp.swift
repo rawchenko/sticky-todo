@@ -28,7 +28,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupStatusBarItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "checklist", accessibilityDescription: "FloatDo")
+            let image = NSImage(named: "PanelGlyph")
+            image?.isTemplate = true
+            image?.size = NSSize(width: 14, height: 14)
+            button.image = image
         }
 
         let menu = NSMenu()
