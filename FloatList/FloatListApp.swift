@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 @main
-struct FloatDoApp: App {
+struct FloatListApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
@@ -46,7 +46,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         _ = GlobalHotkey.toggleVisibility
         _ = GlobalHotkey.expandCollapse
         hotkeyObserver = NotificationCenter.default.addObserver(
-            forName: .floatDoToggleHotkey,
+            forName: .floatListToggleHotkey,
             object: nil,
             queue: .main
         ) { [weak self] _ in
@@ -55,7 +55,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         expandHotkeyObserver = NotificationCenter.default.addObserver(
-            forName: .floatDoExpandCollapseHotkey,
+            forName: .floatListExpandCollapseHotkey,
             object: nil,
             queue: .main
         ) { [weak self] _ in
@@ -92,7 +92,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         settingsItem.keyEquivalentModifierMask = [.command]
         menu.addItem(settingsItem)
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Quit FloatDo", action: #selector(quitApp), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "Quit FloatList", action: #selector(quitApp), keyEquivalent: "q"))
         statusItem?.menu = menu
     }
 
@@ -116,7 +116,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 backing: .buffered,
                 defer: false
             )
-            window.title = "FloatDo Settings"
+            window.title = "FloatList Settings"
             window.contentView = NSHostingView(rootView: SettingsView())
             window.isReleasedWhenClosed = false
             window.minSize = NSSize(width: 420, height: 420)
@@ -136,7 +136,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Clicks inside the nonactivating panel don't promote FloatDo to
+        // Clicks inside the nonactivating panel don't promote FloatList to
         // frontmost, so the fresh Settings window otherwise orders behind the
         // previously-active app. `orderFrontRegardless` forces it on top,
         // then `activate` brings the app forward so the window can take focus.

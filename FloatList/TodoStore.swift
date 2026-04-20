@@ -404,8 +404,8 @@ class TodoStore: ObservableObject {
                 message: "Your todo file was unreadable and could not be moved to a backup. Saving is paused to avoid overwriting it.",
                 backupURL: nil
             )
-            NSLog("FloatDo failed to decode todo file: %@", String(describing: decodeError))
-            NSLog("FloatDo failed to move unreadable todo file to backup: %@", String(describing: error))
+            NSLog("FloatList failed to decode todo file: %@", String(describing: decodeError))
+            NSLog("FloatList failed to move unreadable todo file to backup: %@", String(describing: error))
         }
     }
 
@@ -520,7 +520,7 @@ class TodoStore: ObservableObject {
 
     private static func defaultFileURL(fileManager: FileManager) -> URL {
         let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let appDir = appSupport.appendingPathComponent("FloatDo")
+        let appDir = appSupport.appendingPathComponent("FloatList")
         return appDir.appendingPathComponent("todos.json")
     }
 }

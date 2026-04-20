@@ -16,9 +16,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "F10000000000000000000008"
-               BuildableName = "FloatDo.app"
-               BlueprintName = "FloatDo"
-               ReferencedContainer = "container:FloatDo.xcodeproj">
+               BuildableName = "FloatList.app"
+               BlueprintName = "FloatList"
+               ReferencedContainer = "container:FloatList.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -35,9 +35,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "F20000000000000000000008"
-               BuildableName = "FloatDoTests.xctest"
-               BlueprintName = "FloatDoTests"
-               ReferencedContainer = "container:FloatDo.xcodeproj">
+               BuildableName = "FloatListTests.xctest"
+               BlueprintName = "FloatListTests"
+               ReferencedContainer = "container:FloatList.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
@@ -57,9 +57,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "F10000000000000000000008"
-            BuildableName = "FloatDo.app"
-            BlueprintName = "FloatDo"
-            ReferencedContainer = "container:FloatDo.xcodeproj">
+            BuildableName = "FloatList.app"
+            BlueprintName = "FloatList"
+            ReferencedContainer = "container:FloatList.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -74,9 +74,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "F10000000000000000000008"
-            BuildableName = "FloatDo.app"
-            BlueprintName = "FloatDo"
-            ReferencedContainer = "container:FloatDo.xcodeproj">
+            BuildableName = "FloatList.app"
+            BlueprintName = "FloatList"
+            ReferencedContainer = "container:FloatList.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

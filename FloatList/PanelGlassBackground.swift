@@ -16,7 +16,7 @@ struct PanelGlassBackground<S: Shape>: View {
             ZStack {
                 VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow)
                     .clipShape(shape)
-                shape.fill(FloatDoTheme.shellFallback)
+                shape.fill(FloatListTheme.shellFallback)
             }
         }
     }

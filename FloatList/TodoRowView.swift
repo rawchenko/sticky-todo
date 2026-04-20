@@ -244,7 +244,7 @@ struct TodoCheckboxToggleStyle: ToggleStyle {
             ZStack {
                 if configuration.isOn {
                     Circle()
-                        .fill(FloatDoTheme.success)
+                        .fill(FloatListTheme.success)
                         .frame(width: LayoutTweaks.shared.checkboxSize, height: LayoutTweaks.shared.checkboxSize)
                     Image(systemName: "checkmark")
                         .font(.system(size: LayoutTweaks.shared.checkmarkSize, weight: .bold))
@@ -304,7 +304,7 @@ struct TodoRowView: View {
     private var revealWidth: CGFloat { 72 }
 
     private var titleColor: Color {
-        item.isCompleted ? FloatDoTheme.textSecondary : FloatDoTheme.textPrimary
+        item.isCompleted ? FloatListTheme.textSecondary : FloatListTheme.textPrimary
     }
 
     var body: some View {
@@ -317,7 +317,7 @@ struct TodoRowView: View {
                         TextField("Task", text: $draftTitle, axis: .vertical)
                             .textFieldStyle(.plain)
                             .font(.system(size: tweaks.bodyTextSize))
-                            .foregroundStyle(FloatDoTheme.textPrimary)
+                            .foregroundStyle(FloatListTheme.textPrimary)
                             .lineLimit(1...5)
                             .focused($isEditorFocused)
                             .onKeyPress(.return) {
@@ -344,12 +344,12 @@ struct TodoRowView: View {
                 if let subtitle, !subtitle.isEmpty {
                     Text(subtitle)
                         .font(.system(size: tweaks.secondaryTextSize - 1, weight: .medium))
-                        .foregroundStyle(FloatDoTheme.textSecondary)
+                        .foregroundStyle(FloatListTheme.textSecondary)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
                         .background(
                             Capsule()
-                                .fill(FloatDoTheme.controlFill)
+                                .fill(FloatListTheme.controlFill)
                         )
                 }
             }
@@ -509,7 +509,7 @@ struct TodoRowView: View {
                 revealPill(
                     width: max(0, swipeOffset - tweaks.pillSpacing),
                     progress: min(1, swipeOffset / commitThreshold),
-                    color: isTrashItem ? FloatDoTheme.controlFillStrong : FloatDoTheme.success,
+                    color: isTrashItem ? FloatListTheme.controlFillStrong : FloatListTheme.success,
                     systemImage: isTrashItem ? "arrow.uturn.backward.circle.fill" : "checkmark.circle.fill",
                     alignment: .leading,
                     isInteractive: swipeRest == .leading,
@@ -521,7 +521,7 @@ struct TodoRowView: View {
                 revealPill(
                     width: max(0, -swipeOffset - tweaks.pillSpacing),
                     progress: min(1, -swipeOffset / commitThreshold),
-                    color: FloatDoTheme.destructive,
+                    color: FloatListTheme.destructive,
                     systemImage: "trash.circle.fill",
                     alignment: .trailing,
                     isInteractive: swipeRest == .trailing,
@@ -697,9 +697,9 @@ struct TodoRowView: View {
     private var rowBackground: some View {
         let fill: Color
         if isDragging || isEditing {
-            fill = FloatDoTheme.controlFillStrong
+            fill = FloatListTheme.controlFillStrong
         } else if isHovering && !isDragActive {
-            fill = FloatDoTheme.rowHover
+            fill = FloatListTheme.rowHover
         } else {
             fill = .clear
         }

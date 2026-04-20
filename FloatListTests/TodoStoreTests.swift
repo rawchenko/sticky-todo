@@ -1,5 +1,5 @@
 import XCTest
-@testable import FloatDo
+@testable import FloatList
 
 final class TodoStoreTests: XCTestCase {
     func testLoadLegacyJSONMigratesToDefaultTasksListAndRewritesFile() throws {
@@ -745,7 +745,7 @@ final class TodoStoreTests: XCTestCase {
 
     private func makeStoreFileURL() throws -> URL {
         let directoryURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("FloatDoTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("FloatListTests-\(UUID().uuidString)", isDirectory: true)
 
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
         addTeardownBlock {

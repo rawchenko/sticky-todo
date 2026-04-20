@@ -44,7 +44,7 @@ private struct IconCell: View {
             .symbolVariant(.fill)
             .font(.system(size: 16, weight: .medium))
             .symbolRenderingMode(.hierarchical)
-            .foregroundStyle(FloatDoTheme.textPrimary)
+            .foregroundStyle(FloatListTheme.textPrimary)
             .frame(width: 32, height: 32)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -77,8 +77,8 @@ private struct IconCell: View {
     }
 
     private var background: Color {
-        if isSelected { return FloatDoTheme.controlFillStrong }
-        if isHovering { return FloatDoTheme.rowHover }
+        if isSelected { return FloatListTheme.controlFillStrong }
+        if isHovering { return FloatListTheme.rowHover }
         return .clear
     }
 }

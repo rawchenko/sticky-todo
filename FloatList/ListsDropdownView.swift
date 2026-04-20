@@ -115,20 +115,20 @@ struct ListsDropdownView: View {
             Image(systemName: list.icon)
                 .symbolVariant(.fill)
                 .font(.system(size: tweaks.listIconSize, weight: .medium))
-                .foregroundStyle(FloatDoTheme.textPrimary)
+                .foregroundStyle(FloatListTheme.textPrimary)
                 .symbolRenderingMode(.hierarchical)
                 .contentTransition(.symbolEffect(.replace))
                 .animation(.easeOut(duration: 0.2), value: list.icon)
 
             Text(list.name)
                 .font(.system(size: tweaks.bodyTextSize, weight: .medium))
-                .foregroundStyle(FloatDoTheme.textPrimary)
+                .foregroundStyle(FloatListTheme.textPrimary)
                 .lineLimit(1)
                 .truncationMode(.tail)
 
             Image(systemName: "chevron.down")
                 .font(.system(size: max(tweaks.secondaryTextSize - 2, 8), weight: .semibold))
-                .foregroundStyle(FloatDoTheme.textSecondary)
+                .foregroundStyle(FloatListTheme.textSecondary)
                 .rotationEffect(.degrees(isShowingMenu ? 180 : 0))
                 .animation(.easeOut(duration: 0.2), value: isShowingMenu)
                 .padding(.leading, 2)
@@ -164,11 +164,11 @@ struct ListsDropdownView: View {
 
     private var triggerBackground: Color {
         if isSpecialSelected && !isShowingMenu && !isTriggerHovering {
-            return FloatDoTheme.controlFill
+            return FloatListTheme.controlFill
         }
-        if isShowingMenu { return FloatDoTheme.controlFillStrong }
-        if isTriggerHovering { return FloatDoTheme.rowHover }
-        return FloatDoTheme.tabActiveFill
+        if isShowingMenu { return FloatListTheme.controlFillStrong }
+        if isTriggerHovering { return FloatListTheme.rowHover }
+        return FloatListTheme.tabActiveFill
     }
 
     // MARK: - Rename
@@ -179,13 +179,13 @@ struct ListsDropdownView: View {
             Image(systemName: list.icon)
                 .symbolVariant(.fill)
                 .font(.system(size: tweaks.listIconSize, weight: .medium))
-                .foregroundStyle(FloatDoTheme.textPrimary)
+                .foregroundStyle(FloatListTheme.textPrimary)
                 .symbolRenderingMode(.hierarchical)
 
             TextField("List name", text: $draftName)
                 .textFieldStyle(.plain)
                 .font(.system(size: tweaks.bodyTextSize, weight: .medium))
-                .foregroundStyle(FloatDoTheme.textPrimary)
+                .foregroundStyle(FloatListTheme.textPrimary)
                 .focused($isEditorFocused)
                 .onSubmit { commitEdit(list) }
                 .onExitCommand(perform: cancelEdit)
@@ -195,7 +195,7 @@ struct ListsDropdownView: View {
         .padding(.vertical, tweaks.pillVerticalPadding)
         .background(
             RoundedRectangle(cornerRadius: tweaks.pillCornerRadius, style: .continuous)
-                .fill(FloatDoTheme.tabActiveFill)
+                .fill(FloatListTheme.tabActiveFill)
         )
         .background(WindowDragBlocker())
         .pointerCursor(.iBeam)
@@ -343,13 +343,13 @@ private struct DropdownListRow: View {
             Image(systemName: list.icon)
                 .symbolVariant(.fill)
                 .font(.system(size: tweaks.listIconSize, weight: .medium))
-                .foregroundStyle(FloatDoTheme.textPrimary)
+                .foregroundStyle(FloatListTheme.textPrimary)
                 .symbolRenderingMode(.hierarchical)
                 .frame(width: 20, alignment: .center)
 
             Text(list.name)
                 .font(.system(size: tweaks.bodyTextSize, weight: isSelected ? .semibold : .regular))
-                .foregroundStyle(FloatDoTheme.textPrimary)
+                .foregroundStyle(FloatListTheme.textPrimary)
                 .lineLimit(1)
 
             Spacer(minLength: 8)
@@ -357,7 +357,7 @@ private struct DropdownListRow: View {
             if isSelected {
                 Image(systemName: "checkmark")
                     .font(.system(size: max(tweaks.secondaryTextSize - 1, 9), weight: .semibold))
-                    .foregroundStyle(FloatDoTheme.textSecondary)
+                    .foregroundStyle(FloatListTheme.textSecondary)
             }
         }
         .padding(.horizontal, 8)
@@ -386,8 +386,8 @@ private struct DropdownListRow: View {
     }
 
     private var rowBackground: Color {
-        if isSelected { return FloatDoTheme.tabActiveFill }
-        if isHovering { return FloatDoTheme.rowHover }
+        if isSelected { return FloatListTheme.tabActiveFill }
+        if isHovering { return FloatListTheme.rowHover }
         return .clear
     }
 }
@@ -419,7 +419,7 @@ private struct DropdownActionRow: View {
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isHovering ? FloatDoTheme.rowHover : Color.clear)
+                .fill(isHovering ? FloatListTheme.rowHover : Color.clear)
                 .animation(.easeOut(duration: 0.12), value: isHovering)
         )
         .scaleEffect(isPressed ? 0.98 : 1.0)
@@ -440,6 +440,6 @@ private struct DropdownActionRow: View {
     }
 
     private var foreground: Color {
-        role == .destructive ? FloatDoTheme.destructive : FloatDoTheme.textPrimary
+        role == .destructive ? FloatListTheme.destructive : FloatListTheme.textPrimary
     }
 }

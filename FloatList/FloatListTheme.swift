@@ -56,7 +56,7 @@ extension Color {
 }
 
 /// Adaptive palette tuned for both light and dark Liquid Glass shells.
-enum FloatDoTheme {
+enum FloatListTheme {
     // Shell tint — native Liquid Glass adapts on its own; we only bias slightly.
     static let shellTint = Color.dynamic(
         light: Color.white.opacity(0.08),

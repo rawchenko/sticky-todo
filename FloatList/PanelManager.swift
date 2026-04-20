@@ -120,7 +120,7 @@ private struct PersistedAnchor: Codable {
 }
 
 private enum DefaultsKey {
-    static let panelAnchor = "FloatDo.panelAnchor.v2"
+    static let panelAnchor = "FloatList.panelAnchor.v2"
 }
 
 @MainActor

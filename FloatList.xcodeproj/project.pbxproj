@@ -12,37 +12,37 @@
 			containerPortal = F10000000000000000000009 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = F10000000000000000000008;
-			remoteInfo = FloatDo;
+			remoteInfo = FloatList;
 		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		F10000000000000000000003 /* FloatDo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FloatDo.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		F20000000000000000000003 /* FloatDoTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FloatDoTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		F10000000000000000000003 /* FloatList.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FloatList.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F20000000000000000000003 /* FloatListTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FloatListTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		F10000000000000000000010 /* Exceptions for "FloatDo" folder in "FloatDo" target */ = {
+		F10000000000000000000010 /* Exceptions for "FloatList" folder in "FloatList" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
-			target = F10000000000000000000008 /* FloatDo */;
+			target = F10000000000000000000008 /* FloatList */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		F10000000000000000000004 /* FloatDo */ = {
+		F10000000000000000000004 /* FloatList */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				F10000000000000000000010 /* Exceptions for "FloatDo" folder in "FloatDo" target */,
+				F10000000000000000000010 /* Exceptions for "FloatList" folder in "FloatList" target */,
 			);
-			path = FloatDo;
+			path = FloatList;
 			sourceTree = "<group>";
 		};
-		F20000000000000000000004 /* FloatDoTests */ = {
+		F20000000000000000000004 /* FloatListTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = FloatDoTests;
+			path = FloatListTests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -68,16 +68,16 @@
 		F10000000000000000000001 = {
 			isa = PBXGroup;
 			children = (
-				F10000000000000000000004 /* FloatDo */,
-				F20000000000000000000004 /* FloatDoTests */,
+				F10000000000000000000004 /* FloatList */,
+				F20000000000000000000004 /* FloatListTests */,
 			);
 			sourceTree = "<group>";
 		};
 		F10000000000000000000002 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				F10000000000000000000003 /* FloatDo.app */,
-				F20000000000000000000003 /* FloatDoTests.xctest */,
+				F10000000000000000000003 /* FloatList.app */,
+				F20000000000000000000003 /* FloatListTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -85,9 +85,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		F10000000000000000000008 /* FloatDo */ = {
+		F10000000000000000000008 /* FloatList */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = F1000000000000000000000B /* Build configuration list for PBXNativeTarget "FloatDo" */;
+			buildConfigurationList = F1000000000000000000000B /* Build configuration list for PBXNativeTarget "FloatList" */;
 			buildPhases = (
 				F10000000000000000000005 /* Sources */,
 				F10000000000000000000006 /* Frameworks */,
@@ -98,18 +98,18 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				F10000000000000000000004 /* FloatDo */,
+				F10000000000000000000004 /* FloatList */,
 			);
-			name = FloatDo;
+			name = FloatList;
 			packageProductDependencies = (
 			);
-			productName = FloatDo;
-			productReference = F10000000000000000000003 /* FloatDo.app */;
+			productName = FloatList;
+			productReference = F10000000000000000000003 /* FloatList.app */;
 			productType = "com.apple.product-type.application";
 		};
-		F20000000000000000000008 /* FloatDoTests */ = {
+		F20000000000000000000008 /* FloatListTests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = F2000000000000000000000B /* Build configuration list for PBXNativeTarget "FloatDoTests" */;
+			buildConfigurationList = F2000000000000000000000B /* Build configuration list for PBXNativeTarget "FloatListTests" */;
 			buildPhases = (
 				F20000000000000000000005 /* Sources */,
 				F20000000000000000000006 /* Frameworks */,
@@ -121,13 +121,13 @@
 				F2000000000000000000000A /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				F20000000000000000000004 /* FloatDoTests */,
+				F20000000000000000000004 /* FloatListTests */,
 			);
-			name = FloatDoTests;
+			name = FloatListTests;
 			packageProductDependencies = (
 			);
-			productName = FloatDoTests;
-			productReference = F20000000000000000000003 /* FloatDoTests.xctest */;
+			productName = FloatListTests;
+			productReference = F20000000000000000000003 /* FloatListTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
@@ -149,7 +149,7 @@
 					};
 				};
 			};
-			buildConfigurationList = F1000000000000000000000A /* Build configuration list for PBXProject "FloatDo" */;
+			buildConfigurationList = F1000000000000000000000A /* Build configuration list for PBXProject "FloatList" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -163,8 +163,8 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				F10000000000000000000008 /* FloatDo */,
-				F20000000000000000000008 /* FloatDoTests */,
+				F10000000000000000000008 /* FloatList */,
+				F20000000000000000000008 /* FloatListTests */,
 			);
 		};
 /* End PBXProject section */
@@ -206,7 +206,7 @@
 /* Begin PBXTargetDependency section */
 		F2000000000000000000000A /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = F10000000000000000000008 /* FloatDo */;
+			target = F10000000000000000000008 /* FloatList */;
 			targetProxy = F20000000000000000000009 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -332,23 +332,23 @@
 		F1000000000000000000000E /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = FloatDo;
+				ASSETCATALOG_COMPILER_APPICON_NAME = FloatList;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = FloatDo/FloatDo.entitlements;
+				CODE_SIGN_ENTITLEMENTS = FloatList/FloatList.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = FloatDo/Info.plist;
+				INFOPLIST_FILE = FloatList/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.rawchenko.FloatDo;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rawchenko.FloatList;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -358,23 +358,23 @@
 		F1000000000000000000000F /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = FloatDo;
+				ASSETCATALOG_COMPILER_APPICON_NAME = FloatList;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = FloatDo/FloatDo.entitlements;
+				CODE_SIGN_ENTITLEMENTS = FloatList/FloatList.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = FloatDo/Info.plist;
+				INFOPLIST_FILE = FloatList/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.rawchenko.FloatDo;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rawchenko.FloatList;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -395,12 +395,12 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.rawchenko.FloatDoTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rawchenko.FloatListTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FloatDo.app/Contents/MacOS/FloatDo";
-				TEST_TARGET_NAME = FloatDo;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FloatList.app/Contents/MacOS/FloatList";
+				TEST_TARGET_NAME = FloatList;
 			};
 			name = Debug;
 		};
@@ -418,18 +418,18 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.rawchenko.FloatDoTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rawchenko.FloatListTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FloatDo.app/Contents/MacOS/FloatDo";
-				TEST_TARGET_NAME = FloatDo;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FloatList.app/Contents/MacOS/FloatList";
+				TEST_TARGET_NAME = FloatList;
 			};
 			name = Release;
 		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		F1000000000000000000000A /* Build configuration list for PBXProject "FloatDo" */ = {
+		F1000000000000000000000A /* Build configuration list for PBXProject "FloatList" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				F1000000000000000000000C /* Debug */,
@@ -438,7 +438,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		F1000000000000000000000B /* Build configuration list for PBXNativeTarget "FloatDo" */ = {
+		F1000000000000000000000B /* Build configuration list for PBXNativeTarget "FloatList" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				F1000000000000000000000E /* Debug */,
@@ -447,7 +447,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		F2000000000000000000000B /* Build configuration list for PBXNativeTarget "FloatDoTests" */ = {
+		F2000000000000000000000B /* Build configuration list for PBXNativeTarget "FloatListTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				F2000000000000000000000C /* Debug */,

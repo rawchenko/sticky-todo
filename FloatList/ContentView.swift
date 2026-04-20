@@ -15,7 +15,7 @@ private struct AddListButton: View {
         Button(action: action) {
             Image(systemName: "plus")
                 .font(.system(size: tweaks.addListIconSize, weight: .medium))
-                .foregroundStyle(FloatDoTheme.textSecondary)
+                .foregroundStyle(FloatListTheme.textSecondary)
                 .frame(width: 22, height: 18)
                 .contentShape(Rectangle())
         }
@@ -63,7 +63,7 @@ private struct PillIconButton<Icon: View>: View {
                 .padding(.vertical, tweaks.pillVerticalPadding)
                 .background(
                     RoundedRectangle(cornerRadius: tweaks.pillCornerRadius, style: .continuous)
-                        .fill(isHovering ? FloatDoTheme.rowHover : Color.clear)
+                        .fill(isHovering ? FloatListTheme.rowHover : Color.clear)
                         .animation(.easeOut(duration: 0.12), value: isHovering)
                 )
                 .contentShape(RoundedRectangle(cornerRadius: tweaks.pillCornerRadius, style: .continuous))
@@ -98,7 +98,7 @@ private struct UndoButton: View {
         PillIconButton(help: "Undo (\u{2318}Z)", action: action) {
             Image(systemName: "arrow.uturn.backward")
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(FloatDoTheme.textPrimary)
+                .foregroundStyle(FloatListTheme.textPrimary)
                 .symbolRenderingMode(.hierarchical)
                 .symbolEffect(.bounce, value: undoTick)
         }
@@ -116,7 +116,7 @@ private struct SettingsButton: View {
         ) {
             Image(systemName: "gearshape")
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(FloatDoTheme.textPrimary)
+                .foregroundStyle(FloatListTheme.textPrimary)
                 .symbolRenderingMode(.hierarchical)
                 .rotationEffect(.degrees(Double(spinCount) * 60))
                 .animation(.spring(response: 0.55, dampingFraction: 0.62), value: spinCount)
@@ -302,7 +302,7 @@ struct ContentView: View {
                     HStack(alignment: .top, spacing: 6) {
                         Text("No lists yet")
                             .font(.system(size: tweaks.secondaryTextSize))
-                            .foregroundStyle(FloatDoTheme.textSecondary)
+                            .foregroundStyle(FloatListTheme.textSecondary)
                             .padding(.horizontal, 4)
                         Spacer(minLength: 0)
                         AddListButton(action: createList)
@@ -387,12 +387,12 @@ struct ContentView: View {
             Text("Create a list to get started.")
                 .font(.system(size: 22, weight: .regular, design: .serif).italic())
                 .tracking(-0.4)
-                .foregroundStyle(FloatDoTheme.textPrimary.opacity(0.95))
+                .foregroundStyle(FloatListTheme.textPrimary.opacity(0.95))
                 .multilineTextAlignment(.center)
 
             Text("Tap + above to add one.")
                 .font(.system(size: 13))
-                .foregroundStyle(FloatDoTheme.textSecondary)
+                .foregroundStyle(FloatListTheme.textSecondary)
         }
         .padding(.horizontal, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -403,11 +403,11 @@ struct ContentView: View {
             Text("Start anywhere.")
                 .font(.system(size: 28, weight: .regular, design: .serif).italic())
                 .tracking(-0.56)
-                .foregroundStyle(FloatDoTheme.textPrimary.opacity(0.95))
+                .foregroundStyle(FloatListTheme.textPrimary.opacity(0.95))
 
             Text(isInputFocused ? "Press ⏎ to add" : "Type a task below")
                 .font(.system(size: tweaks.bodyTextSize))
-                .foregroundStyle(FloatDoTheme.textSecondary)
+                .foregroundStyle(FloatListTheme.textSecondary)
         }
         .opacity(isInputFocused ? 0.42 : 0.7)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -419,11 +419,11 @@ struct ContentView: View {
             Text("Trash is empty.")
                 .font(.system(size: 26, weight: .regular, design: .serif).italic())
                 .tracking(-0.48)
-                .foregroundStyle(FloatDoTheme.textPrimary.opacity(0.95))
+                .foregroundStyle(FloatListTheme.textPrimary.opacity(0.95))
 
             Text("Deleted tasks will wait here until you restore them or empty Trash.")
                 .font(.system(size: tweaks.bodyTextSize))
-                .foregroundStyle(FloatDoTheme.textSecondary)
+                .foregroundStyle(FloatListTheme.textSecondary)
                 .multilineTextAlignment(.center)
         }
         .padding(.horizontal, 24)
@@ -435,11 +435,11 @@ struct ContentView: View {
             Text("Completed is clear.")
                 .font(.system(size: 26, weight: .regular, design: .serif).italic())
                 .tracking(-0.48)
-                .foregroundStyle(FloatDoTheme.textPrimary.opacity(0.95))
+                .foregroundStyle(FloatListTheme.textPrimary.opacity(0.95))
 
             Text("Finished tasks from every list will collect here.")
                 .font(.system(size: tweaks.bodyTextSize))
-                .foregroundStyle(FloatDoTheme.textSecondary)
+                .foregroundStyle(FloatListTheme.textSecondary)
                 .multilineTextAlignment(.center)
         }
         .padding(.horizontal, 24)
@@ -570,7 +570,7 @@ struct ContentView: View {
             )
                 .textFieldStyle(.plain)
                 .font(.system(size: tweaks.bodyTextSize))
-                .foregroundStyle(FloatDoTheme.textPrimary)
+                .foregroundStyle(FloatListTheme.textPrimary)
                 .lineLimit(1...5)
                 .focused($isInputFocused)
                 .onSubmit(submitTask)
@@ -579,7 +579,7 @@ struct ContentView: View {
             Button(action: submitTask) {
                 Image(systemName: "arrow.up")
             }
-            .floatDoGlassButton(prominent: canSubmit)
+            .floatListGlassButton(prominent: canSubmit)
             .disabled(!canSubmit)
             .pointerCursor(canSubmit ? .pointingHand : nil)
             .animation(.easeInOut(duration: 0.15), value: canSubmit)
@@ -588,7 +588,7 @@ struct ContentView: View {
         .padding(.trailing, tweaks.inputTrailingPadding)
         .padding(.vertical, tweaks.inputVerticalPadding)
         .background(
-            RoundedRectangle(cornerRadius: tweaks.inputCornerRadius, style: .continuous).fill(FloatDoTheme.inputFill)
+            RoundedRectangle(cornerRadius: tweaks.inputCornerRadius, style: .continuous).fill(FloatListTheme.inputFill)
         )
         .padding(.horizontal, 6)
         .padding(.bottom, 6)
@@ -612,7 +612,7 @@ struct ContentView: View {
             .resizable()
             .aspectRatio(contentMode: .fit)
             .frame(width: 18, height: 18)
-            .foregroundStyle(FloatDoTheme.textPrimary)
+            .foregroundStyle(FloatListTheme.textPrimary)
             .frame(width: tweaks.collapsedWidth, height: tweaks.collapsedHeight)
             .compositingGroup()
             .blur(radius: collapsedBlur)
@@ -696,11 +696,11 @@ struct ContentView: View {
             Text("Start anywhere.")
                 .font(.system(size: 24, weight: .regular, design: .serif).italic())
                 .tracking(-0.48)
-                .foregroundStyle(FloatDoTheme.textPrimary.opacity(0.95))
+                .foregroundStyle(FloatListTheme.textPrimary.opacity(0.95))
 
             Text(isInputFocused ? "Press ⏎ to add" : "Type a task below")
                 .font(.system(size: tweaks.bodyTextSize))
-                .foregroundStyle(FloatDoTheme.textSecondary)
+                .foregroundStyle(FloatListTheme.textSecondary)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 18)
@@ -721,18 +721,18 @@ struct ContentView: View {
             HStack(spacing: 6) {
                 Text(completedButtonTitle(count: count, expanded: expanded))
                     .font(.system(size: tweaks.secondaryTextSize, weight: .medium))
-                    .foregroundStyle(FloatDoTheme.textSecondary)
+                    .foregroundStyle(FloatListTheme.textSecondary)
 
                 Image(systemName: expanded ? "chevron.up" : "chevron.down")
                     .font(.system(size: max(tweaks.secondaryTextSize - 3, 8), weight: .semibold))
-                    .foregroundStyle(FloatDoTheme.textSecondary)
+                    .foregroundStyle(FloatListTheme.textSecondary)
             }
             .padding(.horizontal, tweaks.rowHorizontalPadding)
             .padding(.vertical, max(6, tweaks.rowVerticalPadding))
             .frame(alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous)
-                    .fill((expanded || isHovering) ? FloatDoTheme.controlFill : Color.clear)
+                    .fill((expanded || isHovering) ? FloatListTheme.controlFill : Color.clear)
             )
         }
         .buttonStyle(.plain)
@@ -932,12 +932,12 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(notice.message)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(FloatDoTheme.warningText)
+                    .foregroundStyle(FloatListTheme.warningText)
 
                 if let backupURL = notice.backupURL {
                     Text("Backup: \(backupURL.lastPathComponent)")
                         .font(.system(size: 10))
-                        .foregroundStyle(FloatDoTheme.textSecondary)
+                        .foregroundStyle(FloatListTheme.textSecondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
@@ -950,11 +950,11 @@ struct ContentView: View {
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(FloatDoTheme.textPrimary)
+                    .foregroundStyle(FloatListTheme.textPrimary)
                     .frame(width: 18, height: 18)
                     .background(
                         Circle()
-                            .fill(FloatDoTheme.controlFill)
+                            .fill(FloatListTheme.controlFill)
                     )
             }
             .buttonStyle(.plain)
@@ -962,11 +962,11 @@ struct ContentView: View {
         .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(FloatDoTheme.warningBackground)
+                .fill(FloatListTheme.warningBackground)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(FloatDoTheme.warningBorder, lineWidth: 1)
+                .stroke(FloatListTheme.warningBorder, lineWidth: 1)
         )
     }
 }

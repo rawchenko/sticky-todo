@@ -23,7 +23,7 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
         }
     }
 
-    static let storageKey = "floatdo.settings.appearance"
+    static let storageKey = "floatlist.settings.appearance"
 
     static var current: AppearanceMode {
         let raw = UserDefaults.standard.string(forKey: storageKey) ?? AppearanceMode.system.rawValue

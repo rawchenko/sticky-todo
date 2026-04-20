@@ -2,24 +2,24 @@ import AppKit
 import Carbon
 
 extension Notification.Name {
-    static let floatDoToggleHotkey = Notification.Name("FloatDo.toggleHotkey")
-    static let floatDoExpandCollapseHotkey = Notification.Name("FloatDo.expandCollapseHotkey")
+    static let floatListToggleHotkey = Notification.Name("FloatList.toggleHotkey")
+    static let floatListExpandCollapseHotkey = Notification.Name("FloatList.expandCollapseHotkey")
 }
 
 @MainActor
 final class GlobalHotkey: ObservableObject {
     static let toggleVisibility = GlobalHotkey(
         id: 1,
-        defaultsPrefix: "floatdo.hotkey",
-        notificationName: .floatDoToggleHotkey,
+        defaultsPrefix: "floatlist.hotkey",
+        notificationName: .floatListToggleHotkey,
         defaultKeyCode: UInt32(kVK_ANSI_T),
         defaultModifiers: UInt32(controlKey | optionKey)
     )
 
     static let expandCollapse = GlobalHotkey(
         id: 2,
-        defaultsPrefix: "floatdo.hotkey.expand",
-        notificationName: .floatDoExpandCollapseHotkey,
+        defaultsPrefix: "floatlist.hotkey.expand",
+        notificationName: .floatListExpandCollapseHotkey,
         defaultKeyCode: UInt32(kVK_ANSI_E),
         defaultModifiers: UInt32(controlKey | optionKey)
     )
@@ -38,7 +38,7 @@ final class GlobalHotkey: ObservableObject {
     private var hotKeyRef: EventHotKeyRef?
 
     private static let signature: OSType = {
-        let chars = Array("FlDo".utf8)
+        let chars = Array("FlLi".utf8)
         return chars.reduce(OSType(0)) { ($0 << 8) | OSType($1) }
     }()
 

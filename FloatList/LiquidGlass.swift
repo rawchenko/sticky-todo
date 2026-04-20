@@ -47,7 +47,7 @@ extension View {
     /// Route to Apple's official `.buttonStyle(.glass)` / `.glassProminent`
     /// on macOS 26, with a sensible fallback for earlier systems.
     @ViewBuilder
-    func floatDoGlassButton(
+    func floatListGlassButton(
         prominent: Bool = false,
         size: ControlSize = .large
     ) -> some View {
@@ -64,10 +64,10 @@ extension View {
         } else {
             self
                 .buttonStyle(.plain)
-                .foregroundStyle(FloatDoTheme.textPrimary)
+                .foregroundStyle(FloatListTheme.textPrimary)
                 .padding(size == .large ? 9 : 6)
                 .background(
-                    Circle().fill(prominent ? FloatDoTheme.prominentChipFill : FloatDoTheme.controlFill)
+                    Circle().fill(prominent ? FloatListTheme.prominentChipFill : FloatListTheme.controlFill)
                 )
         }
     }
