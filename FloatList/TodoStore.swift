@@ -346,6 +346,28 @@ class TodoStore: ObservableObject {
         save()
     }
 
+    /// Move an item into a different regular list, preserving the active/completed
+    /// ordering of the destination. No-ops for trashed items, special lists, or
+    /// when the target is the item's current list.
+    func moveItem(_ item: TodoItem, to targetListID: UUID) {
+        guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
+        guard !items[idx].isTrashed else { return }
+        guard !isSpecialListID(targetListID) else { return }
+        guard lists.contains(where: { $0.id == targetListID }) else { return }
+        guard items[idx].listID != targetListID else { return }
+
+        captureUndoSnapshot()
+        var moving = items.remove(at: idx)
+        moving.listID = targetListID
+        let destination = insertionIndex(
+            for: targetListID,
+            insertingCompleted: moving.isCompleted,
+            fallback: items.count
+        )
+        items.insert(moving, at: destination)
+        save()
+    }
+
     func moveList(from: Int, to: Int) {
         guard lists.indices.contains(from),
               to >= 0, to < lists.count,

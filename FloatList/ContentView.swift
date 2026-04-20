@@ -444,6 +444,7 @@ struct ContentView: View {
                         onDelete: { deleteList($0) },
                         onEmptyTrash: { emptyTrash() },
                         onSetIcon: { list, symbol in store.setListIcon(list, to: symbol) },
+                        onReorder: { from, to in store.moveList(from: from, to: to) },
                         onAutoFocusConsumed: { pendingAutoFocusListID = nil }
                     )
                 }
@@ -724,6 +725,12 @@ struct ContentView: View {
             },
             onDragEnded: { translation in
                 commitDrag(for: item.id, translation: translation)
+            },
+            moveDestinations: isTrashItem ? [] : store.lists.filter { $0.id != item.listID },
+            onMoveToList: { targetListID in
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                    store.moveItem(item, to: targetListID)
+                }
             },
             isToggleEnabled: !isTrashItem && pendingToggleAnimation == nil && draggingID == nil,
             isReorderEnabled: isReorderEnabled ?? !store.isSpecialListSelected

@@ -13,6 +13,7 @@ struct ListsDropdownView: View {
     var onDelete: (TodoList) -> Void
     var onEmptyTrash: () -> Void
     var onSetIcon: (TodoList, String) -> Void
+    var onReorder: (Int, Int) -> Void
     var onAutoFocusConsumed: () -> Void
 
     @State private var isEditing = false
@@ -22,9 +23,16 @@ struct ListsDropdownView: View {
     @State private var isShowingMenu = false
     @State private var isShowingIconPicker = false
     @State private var heldPanelHover = false
+    @State private var dragSession: ListDragSession?
+    @State private var rowFrames: [UUID: CGRect] = [:]
+    @State private var rowHeights: [UUID: CGFloat] = [:]
     @FocusState private var isEditorFocused: Bool
     @ObservedObject private var tweaks = LayoutTweaks.shared
     @EnvironmentObject private var panelManager: PanelManager
+
+    private static let reorderCoordinateSpace = "listsMenu"
+    private static let reorderAnimation = Animation.spring(response: 0.28, dampingFraction: 0.86)
+    private static let reorderStepAnimation = Animation.interactiveSpring(response: 0.22, dampingFraction: 0.9)
 
     private var allLists: [TodoList] {
         lists + [completedList, trashList]
@@ -42,6 +50,22 @@ struct ListsDropdownView: View {
     private var isSpecialSelected: Bool {
         guard let id = selected?.id else { return false }
         return id == completedList.id || id == trashList.id
+    }
+
+    private var draggingID: UUID? {
+        dragSession?.list.id
+    }
+
+    private var projectedLists: [TodoList] {
+        guard let session = dragSession else { return lists }
+        var items = lists
+        guard let currentIndex = items.firstIndex(where: { $0.id == session.list.id }) else {
+            return items
+        }
+        let moving = items.remove(at: currentIndex)
+        let target = min(max(session.targetIndex, 0), items.count)
+        items.insert(moving, at: target)
+        return items
     }
 
     var body: some View {
@@ -83,9 +107,20 @@ struct ListsDropdownView: View {
             beginEdit(list)
             onAutoFocusConsumed()
         }
-        .onChange(of: isShowingMenu) { _, _ in syncPanelHoverHold() }
+        .onChange(of: isShowingMenu) { _, showing in
+            syncPanelHoverHold()
+            if !showing { cancelDrag() }
+        }
         .onChange(of: isShowingIconPicker) { _, _ in syncPanelHoverHold() }
         .onChange(of: isEditing) { _, _ in syncPanelHoverHold() }
+        .onChange(of: lists.map(\.id)) { _, ids in
+            let live = Set(ids)
+            rowFrames = rowFrames.filter { live.contains($0.key) }
+            rowHeights = rowHeights.filter { live.contains($0.key) }
+            if let id = dragSession?.list.id, !live.contains(id) {
+                cancelDrag()
+            }
+        }
         .onDisappear { releasePanelHoverHoldIfNeeded() }
     }
 
@@ -211,17 +246,19 @@ struct ListsDropdownView: View {
     @ViewBuilder
     private func menuContent(for current: TodoList) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            ForEach(lists) { item in
-                DropdownListRow(
-                    list: item,
-                    isSelected: item.id == current.id,
-                    onTap: {
-                        isShowingMenu = false
-                        if item.id != current.id {
-                            onSelect(item.id)
-                        }
-                    }
-                )
+            ForEach(projectedLists) { item in
+                if draggingID == item.id, let session = dragSession {
+                    Color.clear
+                        .frame(height: session.frozenHeight)
+                        .frame(maxWidth: .infinity)
+                        .overlay { listDragLandingIndicator() }
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                } else {
+                    listRow(for: item, current: current)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
             }
 
             if !lists.isEmpty {
@@ -233,6 +270,7 @@ struct ListsDropdownView: View {
                 DropdownListRow(
                     list: item,
                     isSelected: item.id == current.id,
+                    coordinateSpace: "",
                     onTap: {
                         isShowingMenu = false
                         if item.id != current.id {
@@ -292,8 +330,222 @@ struct ListsDropdownView: View {
                 )
             }
         }
+        .coordinateSpace(name: Self.reorderCoordinateSpace)
+        .overlay(alignment: .topLeading) {
+            if let session = dragSession {
+                DropdownListRow(
+                    list: session.list,
+                    isSelected: session.list.id == current.id,
+                    coordinateSpace: "",
+                    onTap: {}
+                )
+                .frame(width: session.initialFrame.width, height: session.frozenHeight)
+                .offset(
+                    x: session.initialFrame.minX,
+                    y: session.initialFrame.minY + session.gestureTranslation
+                )
+                .shadow(color: Color.black.opacity(0.22), radius: 10, y: 4)
+                .allowsHitTesting(false)
+            }
+        }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 4, coordinateSpace: .named(Self.reorderCoordinateSpace))
+                .onChanged { value in
+                    handleMenuDragChanged(start: value.startLocation, translation: value.translation.height)
+                }
+                .onEnded { value in
+                    handleMenuDragEnded(start: value.startLocation, translation: value.translation.height)
+                }
+        )
         .padding(6)
         .frame(minWidth: 200)
+        .onPreferenceChange(RowFramePreferenceKey.self) { frames in
+            rowFrames.merge(frames) { _, new in new }
+            refreshDragSessionTarget()
+        }
+        .onPreferenceChange(RowHeightPreferenceKey.self) { heights in
+            rowHeights.merge(heights) { _, new in new }
+        }
+        .animation(Self.reorderStepAnimation, value: dragSession?.targetIndex)
+    }
+
+    @ViewBuilder
+    private func listRow(for item: TodoList, current: TodoList) -> some View {
+        DropdownListRow(
+            list: item,
+            isSelected: item.id == current.id,
+            coordinateSpace: Self.reorderCoordinateSpace,
+            onTap: {
+                guard dragSession == nil else { return }
+                isShowingMenu = false
+                if item.id != current.id {
+                    onSelect(item.id)
+                }
+            }
+        )
+    }
+
+    private func listDragLandingIndicator() -> some View {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(FloatListTheme.controlFillStrong.opacity(0.14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(FloatListTheme.hairline.opacity(0.35), lineWidth: 1)
+            )
+            .shadow(color: FloatListTheme.panelShadow(opacity: 0.08), radius: 4, y: 1)
+            .padding(.vertical, 2)
+            .allowsHitTesting(false)
+    }
+
+    // MARK: - Drag
+
+    private func handleMenuDragChanged(start: CGPoint, translation: CGFloat) {
+        guard lists.count > 1 else { return }
+
+        if let session = dragSession {
+            updateDrag(for: session.list.id, translation: translation)
+            return
+        }
+
+        guard let id = userListID(at: start) else { return }
+        updateDrag(for: id, translation: translation)
+    }
+
+    private func handleMenuDragEnded(start: CGPoint, translation: CGFloat) {
+        guard let session = dragSession else { return }
+        commitDrag(for: session.list.id, translation: translation)
+    }
+
+    private func updateDrag(for id: UUID, translation: CGFloat) {
+        let order = lists.map(\.id)
+        guard beginDragSessionIfNeeded(for: id, translation: translation, order: order) else { return }
+
+        guard var session = dragSession, session.list.id == id else { return }
+        session = updatedDragSession(session, translation: translation, in: order)
+        applyDragSessionUpdate(session, triggerHaptic: true)
+    }
+
+    private func userListID(at point: CGPoint) -> UUID? {
+        for list in lists {
+            if let frame = rowFrames[list.id], frame.contains(point) {
+                return list.id
+            }
+        }
+        return nil
+    }
+
+    private func commitDrag(for id: UUID, translation: CGFloat) {
+        guard let session = dragSession, session.list.id == id else { return }
+
+        let order = lists.map(\.id)
+        let updated = updatedDragSession(session, translation: translation, in: order)
+        let target = clampedStoreTarget(updated.targetIndex)
+        let origin = updated.originalIndex
+
+        withAnimation(Self.reorderAnimation) {
+            if target != origin {
+                onReorder(origin, target)
+            }
+            dragSession = nil
+        }
+    }
+
+    private func cancelDrag() {
+        guard dragSession != nil else { return }
+        withAnimation(Self.reorderAnimation) {
+            dragSession = nil
+        }
+    }
+
+    private func refreshDragSessionTarget() {
+        guard var session = dragSession else { return }
+        let order = lists.map(\.id)
+        guard order.contains(session.list.id) else {
+            cancelDrag()
+            return
+        }
+        session = updatedDragSession(session, in: order)
+        applyDragSessionUpdate(session, triggerHaptic: true)
+    }
+
+    private func applyDragSessionUpdate(_ session: ListDragSession, triggerHaptic: Bool) {
+        let previousTarget = dragSession?.targetIndex
+        dragSession = session
+        if previousTarget != session.targetIndex && triggerHaptic {
+            fireHaptic(.alignment)
+        }
+    }
+
+    private func beginDragSessionIfNeeded(
+        for id: UUID,
+        translation: CGFloat,
+        order: [UUID]
+    ) -> Bool {
+        if dragSession != nil { return true }
+
+        guard let originalIndex = order.firstIndex(of: id),
+              let initialFrame = rowFrames[id]
+        else { return false }
+
+        let height = rowHeights[id] ?? initialFrame.height
+        let list = lists[originalIndex]
+
+        dragSession = ListDragSession(
+            list: list,
+            originalIndex: originalIndex,
+            initialFrame: initialFrame,
+            frozenHeight: height,
+            gestureTranslation: translation,
+            lastCompositeTranslation: translation,
+            dragDirection: .stationary,
+            targetIndex: originalIndex
+        )
+        fireHaptic(.levelChange)
+        return true
+    }
+
+    private func updatedDragSession(
+        _ session: ListDragSession,
+        translation: CGFloat? = nil,
+        in order: [UUID]
+    ) -> ListDragSession {
+        var updated = session
+        let nextTranslation = translation ?? session.gestureTranslation
+        let delta = nextTranslation - session.lastCompositeTranslation
+        updated.dragDirection = ReorderDragDirection(delta: delta, fallback: session.dragDirection)
+        updated.gestureTranslation = nextTranslation
+        updated.lastCompositeTranslation = nextTranslation
+        updated.targetIndex = resolvedTargetIndex(for: updated, in: order)
+        return updated
+    }
+
+    private func resolvedTargetIndex(for session: ListDragSession, in order: [UUID]) -> Int {
+        let draggingID = session.list.id
+        let overlayMidY = session.overlayMidY
+        let remaining = order.filter { $0 != draggingID }
+        let frames = remaining.map { id -> CGRect in
+            rowFrames[id] ?? .zero
+        }
+        return min(
+            max(
+                ReorderInteractionMath.targetIndex(
+                    for: overlayMidY,
+                    frames: frames,
+                    direction: session.dragDirection
+                ),
+                0
+            ),
+            remaining.count
+        )
+    }
+
+    private func clampedStoreTarget(_ targetIndex: Int) -> Int {
+        guard !lists.isEmpty else { return 0 }
+        return min(max(targetIndex, 0), lists.count - 1)
+    }
+
+    private func fireHaptic(_ pattern: NSHapticFeedbackManager.FeedbackPattern) {
+        NSHapticFeedbackManager.defaultPerformer.perform(pattern, performanceTime: .default)
     }
 
     // MARK: - Edit helpers
@@ -327,11 +579,27 @@ struct ListsDropdownView: View {
     }
 }
 
+private struct ListDragSession {
+    let list: TodoList
+    let originalIndex: Int
+    let initialFrame: CGRect
+    let frozenHeight: CGFloat
+    var gestureTranslation: CGFloat
+    var lastCompositeTranslation: CGFloat
+    var dragDirection: ReorderDragDirection
+    var targetIndex: Int
+
+    var overlayMidY: CGFloat {
+        initialFrame.midY + gestureTranslation
+    }
+}
+
 // MARK: - Rows
 
 private struct DropdownListRow: View {
     let list: TodoList
     let isSelected: Bool
+    var coordinateSpace: String = ""
     var onTap: () -> Void
 
     @State private var isHovering = false
@@ -339,6 +607,12 @@ private struct DropdownListRow: View {
     @ObservedObject private var tweaks = LayoutTweaks.shared
 
     var body: some View {
+        rowContent
+            .background(framePreference)
+    }
+
+    @ViewBuilder
+    private var rowContent: some View {
         HStack(spacing: tweaks.pillSpacing + 4) {
             Image(systemName: list.icon)
                 .symbolVariant(.fill)
@@ -383,6 +657,25 @@ private struct DropdownListRow: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(list.name)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    @ViewBuilder
+    private var framePreference: some View {
+        if coordinateSpace.isEmpty {
+            Color.clear
+        } else {
+            GeometryReader { geo in
+                Color.clear
+                    .preference(
+                        key: RowFramePreferenceKey.self,
+                        value: [list.id: geo.frame(in: .named(coordinateSpace))]
+                    )
+                    .preference(
+                        key: RowHeightPreferenceKey.self,
+                        value: [list.id: geo.size.height]
+                    )
+            }
+        }
     }
 
     private var rowBackground: Color {
