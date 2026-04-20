@@ -259,6 +259,8 @@ struct ContentView: View {
 
     private var expandedLayer: some View {
         expandedContent
+            .compositingGroup()
+            .blur(radius: expandedBlur)
             .opacity(expandedOpacity)
             .scaleEffect(expandedScale, anchor: panelManager.currentAnchor.edge.unitPoint)
             .allowsHitTesting(expansionProgress > 0.72)
@@ -612,6 +614,8 @@ struct ContentView: View {
             .frame(width: 18, height: 18)
             .foregroundStyle(FloatDoTheme.textPrimary)
             .frame(width: tweaks.collapsedWidth, height: tweaks.collapsedHeight)
+            .compositingGroup()
+            .blur(radius: collapsedBlur)
             .opacity(collapsedOpacity)
             .scaleEffect(collapsedScale, anchor: panelManager.currentAnchor.edge.unitPoint)
             .offset(collapsedOffset)
@@ -624,21 +628,22 @@ struct ContentView: View {
     }
 
     private var expandedOpacity: CGFloat {
-        let adjusted = max(0, (expansionProgress - 0.18) / 0.82)
-        return adjusted * adjusted
+        smoothstep((expansionProgress - 0.10) / 0.82)
     }
 
     private var expandedScale: CGFloat {
-        0.975 + (0.025 * expansionProgress)
+        0.94 + (0.06 * expansionProgress)
     }
 
     private var collapsedOpacity: CGFloat {
-        let inverse = 1 - expansionProgress
-        return min(1, inverse * 1.3)
+        // Fade runs ahead of `expansionProgress` (x1.55) so the glyph clears
+        // the frame before the expanded layer reaches full opacity, letting
+        // the two cross through the blurred midpoint instead of stacking.
+        smoothstep((1 - expansionProgress) * 1.55)
     }
 
     private var collapsedScale: CGFloat {
-        1 - (0.1 * expansionProgress)
+        1 - (0.18 * expansionProgress)
     }
 
     private var collapsedOffset: CGSize {
@@ -646,6 +651,15 @@ struct ContentView: View {
             width: transitionOffset.width * expansionProgress * 0.32,
             height: transitionOffset.height * expansionProgress * 0.32
         )
+    }
+
+    private var expandedBlur: CGFloat {
+        let remaining = 1 - expansionProgress
+        return remaining * remaining * PanelMotion.expandedTransitionBlur
+    }
+
+    private var collapsedBlur: CGFloat {
+        expansionProgress * expansionProgress * PanelMotion.collapsedTransitionBlur
     }
 
     private var transitionOffset: CGSize {

@@ -306,6 +306,19 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
 
         let (vertical, anchorY) = determineVerticalAnchor(panelFrame: f, visible: v)
         let anchor = EdgeAnchor(edge: bestEdge, vertical: vertical, anchorY: anchorY)
+
+        // Collapse in the same motion as the edge snap when the cursor
+        // won't land inside the docked glyph — otherwise the user sees two
+        // sequential animations (snap, then collapse).
+        if !isCollapsed && !isKeyboardPinned && !isHoverHeld {
+            let docked = dockedCollapsedFrame(for: anchor, on: screen)
+            if !pointerIsWithinSafeArea(of: docked) {
+                withAnimation(PanelMotion.stateAnimation) {
+                    isCollapsed = true
+                }
+            }
+        }
+
         positionAtAnchor(anchor, on: screen, animated: true)
         persistAnchor(anchor, screen: screen)
         hideGhost()
@@ -349,7 +362,7 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
         }
 
         pendingSnapWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.04, execute: workItem)
     }
 
     func windowWillStartLiveResize(_ notification: Notification) {
@@ -398,7 +411,8 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
             isProgrammaticMove = true
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = PanelMotion.frameAnimationDuration
-                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.18, 1.0, 0.22, 1.0)
+                context.timingFunction = PanelMotion.frameTiming
+                context.allowsImplicitAnimation = true
                 panel.animator().setFrame(newFrame, display: true)
             } completionHandler: { [weak self] in
                 MainActor.assumeIsolated {
@@ -447,11 +461,16 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
         let bestEdge: ScreenEdge = (v.maxX - panelFrame.maxX) <= (panelFrame.minX - v.minX) ? .right : .left
         let (vertical, anchorY) = determineVerticalAnchor(panelFrame: panelFrame, visible: v)
         let anchor = EdgeAnchor(edge: bestEdge, vertical: vertical, anchorY: anchorY)
-        let collapsed = NSSize(
+        return dockedCollapsedFrame(for: anchor, on: screen)
+    }
+
+    private func dockedCollapsedFrame(for anchor: EdgeAnchor, on screen: NSScreen) -> NSRect {
+        let v = screen.visibleFrame
+        let size = NSSize(
             width: min(collapsedSize.width, v.width),
             height: min(collapsedSize.height, v.height)
         )
-        return frame(for: anchor, on: screen, size: collapsed)
+        return frame(for: anchor, on: screen, size: size)
     }
 
     private func clampPanelMinY(_ minY: CGFloat, height: CGFloat, in visible: NSRect) -> CGFloat {
@@ -654,8 +673,12 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
 
     private func pointerIsWithinHoverSafeArea() -> Bool {
         guard let panel else { return false }
-        let safeFrame = panel.frame.insetBy(dx: -PanelHover.safeInset, dy: -PanelHover.safeInset)
-        return safeFrame.contains(NSEvent.mouseLocation)
+        return pointerIsWithinSafeArea(of: panel.frame)
+    }
+
+    private func pointerIsWithinSafeArea(of rect: NSRect) -> Bool {
+        rect.insetBy(dx: -PanelHover.safeInset, dy: -PanelHover.safeInset)
+            .contains(NSEvent.mouseLocation)
     }
 
     private func pointerIsWithinWindowBounds() -> Bool {
