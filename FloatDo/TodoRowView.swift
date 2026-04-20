@@ -57,11 +57,9 @@ struct TodoRowView: View {
     let isDragging: Bool
     let isDragActive: Bool
     let yOffset: CGFloat
-    var depth: Int = 0
     var onToggle: () -> Void
     var onDelete: () -> Void
     var onRename: (String) -> Void = { _ in }
-    var onAddSubtask: (() -> Void)? = nil
     var onDragChanged: (CGFloat) -> Void = { _ in }
     var onDragEnded: (CGFloat) -> Void = { _ in }
 
@@ -116,20 +114,6 @@ struct TodoRowView: View {
 
             Spacer(minLength: 4)
 
-            if let onAddSubtask {
-                Button(action: onAddSubtask) {
-                    Image(systemName: "arrow.turn.down.right")
-                        .font(.system(size: 11, weight: .regular))
-                        .foregroundStyle(FloatDoTheme.textSecondary)
-                        .frame(width: 22, height: 18)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .pointerCursor(.pointingHand, active: isHovering && !isDragActive && !isEditorFocused)
-                .opacity(isHovering && !isDragActive && !isEditorFocused ? 1 : 0)
-                .allowsHitTesting(isHovering && !isDragActive && !isEditorFocused)
-            }
-
             Button(action: onDelete) {
                 Image(systemName: "trash")
                     .font(.system(size: 11, weight: .regular))
@@ -142,8 +126,7 @@ struct TodoRowView: View {
             .opacity(isHovering && !isDragActive && !isEditorFocused ? 1 : 0)
             .allowsHitTesting(isHovering && !isDragActive && !isEditorFocused)
         }
-        .padding(.leading, depth > 0 ? 34 : 12)
-        .padding(.trailing, 12)
+        .padding(.horizontal, 12)
         .padding(.vertical, 11)
         .background(WindowDragBlocker())
         .background(rowBackground)
