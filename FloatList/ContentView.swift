@@ -99,7 +99,7 @@ private struct UndoButton: View {
             Image(systemName: "arrow.uturn.backward")
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(FloatListTheme.textPrimary)
-                .symbolRenderingMode(.hierarchical)
+                .symbolRenderingMode(.monochrome)
                 .symbolEffect(.bounce, value: undoTick)
         }
     }
@@ -114,10 +114,10 @@ private struct SettingsButton: View {
             action: openSettings,
             onHoverStart: { spinCount += 1 }
         ) {
-            Image(systemName: "gearshape")
+            Image(systemName: "gear")
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(FloatListTheme.textPrimary)
-                .symbolRenderingMode(.hierarchical)
+                .symbolRenderingMode(.monochrome)
                 .rotationEffect(.degrees(Double(spinCount) * 60))
                 .animation(.spring(response: 0.55, dampingFraction: 0.62), value: spinCount)
         }

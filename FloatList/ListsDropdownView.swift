@@ -116,7 +116,7 @@ struct ListsDropdownView: View {
                 .symbolVariant(.fill)
                 .font(.system(size: tweaks.listIconSize, weight: .medium))
                 .foregroundStyle(FloatListTheme.textPrimary)
-                .symbolRenderingMode(.hierarchical)
+                .symbolRenderingMode(.monochrome)
                 .contentTransition(.symbolEffect(.replace))
                 .animation(.easeOut(duration: 0.2), value: list.icon)
 
@@ -180,7 +180,7 @@ struct ListsDropdownView: View {
                 .symbolVariant(.fill)
                 .font(.system(size: tweaks.listIconSize, weight: .medium))
                 .foregroundStyle(FloatListTheme.textPrimary)
-                .symbolRenderingMode(.hierarchical)
+                .symbolRenderingMode(.monochrome)
 
             TextField("List name", text: $draftName)
                 .textFieldStyle(.plain)
@@ -247,7 +247,7 @@ struct ListsDropdownView: View {
 
             DropdownActionRow(
                 title: "New list",
-                systemImage: "plus",
+                systemImage: "folder.fill.badge.plus",
                 action: {
                     isShowingMenu = false
                     DispatchQueue.main.async { onCreate() }
@@ -344,7 +344,7 @@ private struct DropdownListRow: View {
                 .symbolVariant(.fill)
                 .font(.system(size: tweaks.listIconSize, weight: .medium))
                 .foregroundStyle(FloatListTheme.textPrimary)
-                .symbolRenderingMode(.hierarchical)
+                .symbolRenderingMode(.monochrome)
                 .frame(width: 20, alignment: .center)
 
             Text(list.name)
