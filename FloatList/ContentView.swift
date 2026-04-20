@@ -630,11 +630,8 @@ struct ContentView: View {
 
     private var collapsedGlyph: some View {
         Image("PanelGlyph")
-            .renderingMode(.template)
             .resizable()
             .aspectRatio(contentMode: .fit)
-            .frame(width: 18, height: 18)
-            .foregroundStyle(FloatListTheme.textPrimary)
             .frame(width: tweaks.collapsedWidth, height: tweaks.collapsedHeight)
             .compositingGroup()
             .blur(radius: collapsedBlur)
