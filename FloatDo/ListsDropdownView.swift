@@ -205,9 +205,6 @@ struct ListsDropdownView: View {
                 )
             }
 
-            Divider()
-                .padding(.vertical, 4)
-
             DropdownActionRow(
                 title: "New list",
                 systemImage: "plus",
@@ -216,6 +213,10 @@ struct ListsDropdownView: View {
                     DispatchQueue.main.async { onCreate() }
                 }
             )
+
+            Divider()
+                .padding(.vertical, 4)
+
             DropdownActionRow(
                 title: "Rename",
                 systemImage: "pencil",

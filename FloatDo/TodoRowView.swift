@@ -161,6 +161,72 @@ struct TwoFingerSwipeDetector: NSViewRepresentable {
     }
 }
 
+/// Fires `onClickOutside` when a mouse-down lands outside the hosted view's
+/// bounds while `isActive` is true. Used to exit the inline editor when the
+/// user clicks elsewhere in the panel.
+struct ClickOutsideDetector: NSViewRepresentable {
+    var isActive: Bool
+    var onClickOutside: () -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = DetectorView()
+        view.onClickOutside = onClickOutside
+        view.setActive(isActive)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        guard let view = nsView as? DetectorView else { return }
+        view.onClickOutside = onClickOutside
+        view.setActive(isActive)
+    }
+
+    private final class DetectorView: NSView {
+        var onClickOutside: (() -> Void)?
+        private var monitor: Any?
+        private var active = false
+
+        override var mouseDownCanMoveWindow: Bool { false }
+
+        func setActive(_ newValue: Bool) {
+            guard newValue != active else { return }
+            active = newValue
+            if active, window != nil { install() } else { remove() }
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window == nil {
+                remove()
+            } else if active {
+                install()
+            }
+        }
+
+        deinit { remove() }
+
+        private func install() {
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+                guard let self, let window = self.window else { return event }
+                guard event.window === window else { return event }
+                let pointInView = self.convert(event.locationInWindow, from: nil)
+                if !self.bounds.contains(pointInView) {
+                    self.onClickOutside?()
+                }
+                return event
+            }
+        }
+
+        private func remove() {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+                self.monitor = nil
+            }
+        }
+    }
+}
+
 struct RowHeightPreferenceKey: PreferenceKey {
     static var defaultValue: [UUID: CGFloat] = [:]
     static func reduce(value: inout [UUID: CGFloat], nextValue: () -> [UUID: CGFloat]) {
@@ -220,18 +286,14 @@ struct TodoRowView: View {
     @State private var swipeOffset: CGFloat = 0
     @State private var hasCommittedHaptic = false
     @State private var rowWidth: CGFloat = 0
+    @State private var isEditing = false
     @FocusState private var isEditorFocused: Bool
     @ObservedObject private var tweaks = LayoutTweaks.shared
 
     private var commitThreshold: CGFloat { max(80, rowWidth * 0.35) }
 
-    private var showsStrikethroughOverlay: Bool {
-        item.isCompleted && !isEditorFocused
-    }
-
     private var titleColor: Color {
-        if showsStrikethroughOverlay { return .clear }
-        return item.isCompleted ? FloatDoTheme.textSecondary : FloatDoTheme.textPrimary
+        item.isCompleted ? FloatDoTheme.textSecondary : FloatDoTheme.textPrimary
     }
 
     var body: some View {
@@ -245,33 +307,43 @@ struct TodoRowView: View {
             .toggleStyle(TodoCheckboxToggleStyle())
 
             ZStack(alignment: .topLeading) {
-                TextField("Task", text: $draftTitle, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: tweaks.bodyTextSize))
-                    .foregroundStyle(titleColor)
-                    .lineLimit(1...5)
-                    .focused($isEditorFocused)
-                    .onSubmit { isEditorFocused = false }
-                    .onExitCommand(perform: cancelEdit)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-
-                if showsStrikethroughOverlay {
+                if isEditing {
+                    TextField("Task", text: $draftTitle, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: tweaks.bodyTextSize))
+                        .foregroundStyle(FloatDoTheme.textPrimary)
+                        .lineLimit(1...5)
+                        .focused($isEditorFocused)
+                        .onKeyPress(.return) {
+                            isEditorFocused = false
+                            return .handled
+                        }
+                        .onExitCommand(perform: cancelEdit)
+                        .onAppear { isEditorFocused = true }
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                } else {
                     Text(item.title)
                         .font(.system(size: tweaks.bodyTextSize))
-                        .strikethrough(true)
-                        .foregroundStyle(FloatDoTheme.textSecondary)
+                        .strikethrough(item.isCompleted)
+                        .foregroundStyle(titleColor)
                         .lineLimit(1...5)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
-                        .allowsHitTesting(false)
+                        .contentShape(Rectangle())
+                        .onTapGesture(count: 2) { isEditing = true }
                 }
             }
             .frame(minHeight: 18, alignment: .topLeading)
-            .pointerCursor(.iBeam, active: !isDragActive)
+            .pointerCursor(.iBeam, active: isEditing && !isDragActive)
         }
         .padding(.horizontal, tweaks.rowHorizontalPadding)
         .padding(.vertical, tweaks.rowVerticalPadding)
         .background(WindowDragBlocker())
+        .background(
+            ClickOutsideDetector(isActive: isEditing) {
+                isEditorFocused = false
+            }
+        )
         .background(rowBackground)
         .clipShape(RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous))
         .offset(x: swipeOffset)
@@ -319,16 +391,30 @@ struct TodoRowView: View {
             }
         }
         .onChange(of: isEditorFocused) { _, focused in
-            if !focused { commitEdit() }
+            if !focused {
+                commitEdit()
+                isEditing = false
+            }
         }
         .task(id: item.id) { draftTitle = item.title }
         .onChange(of: item.title) { _, new in
             if !isEditorFocused { draftTitle = new }
         }
         .contextMenu {
-            Button(item.isCompleted ? "Mark Incomplete" : "Mark Complete") { onToggle() }
+            Button {
+                onToggle()
+            } label: {
+                Label(
+                    item.isCompleted ? "Mark Incomplete" : "Mark Complete",
+                    systemImage: item.isCompleted ? "circle" : "checkmark.circle"
+                )
+            }
             Divider()
-            Button("Delete", role: .destructive) { onDelete() }
+            Button(role: .destructive) {
+                onDelete()
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
         }
         .gesture(
             DragGesture(minimumDistance: 8, coordinateSpace: .named("list"))
@@ -346,7 +432,7 @@ struct TodoRowView: View {
                     }
                     onDragEnded(value.translation.height)
                 },
-            including: isEditorFocused ? .subviews : .all
+            including: isEditing ? .subviews : .all
         )
     }
 
@@ -471,9 +557,14 @@ struct TodoRowView: View {
     private var hoverCursor: NSCursor? { .openHand }
 
     private var rowBackground: some View {
-        Rectangle()
-            .fill(isDragging
-                ? FloatDoTheme.controlFillStrong
-                : (isHovering && !isDragActive ? FloatDoTheme.rowHover : .clear))
+        let fill: Color
+        if isDragging || isEditing {
+            fill = FloatDoTheme.controlFillStrong
+        } else if isHovering && !isDragActive {
+            fill = FloatDoTheme.rowHover
+        } else {
+            fill = .clear
+        }
+        return Rectangle().fill(fill)
     }
 }
