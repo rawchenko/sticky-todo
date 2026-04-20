@@ -107,6 +107,7 @@ struct ContentView: View {
     @State private var escapeMonitor: Any?
     @State private var pendingAutoFocusListID: UUID?
     @State private var listPendingDeletion: TodoList?
+    @State private var isShowingEmptyTrashAlert = false
     @State private var isHoldingForDeletePrompt = false
     @FocusState private var isInputFocused: Bool
 
@@ -165,8 +166,21 @@ struct ContentView: View {
         } message: { list in
             Text(deleteAlertMessage(for: list))
         }
-        .onChange(of: listPendingDeletion == nil) { _, isNil in
-            setDeletePromptHold(!isNil)
+        .alert(
+            "Empty Trash?",
+            isPresented: $isShowingEmptyTrashAlert
+        ) {
+            Button("Empty Trash", role: .destructive) {
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.84)) {
+                    store.emptyTrash()
+                }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("All trashed items will be permanently deleted.")
+        }
+        .onChange(of: listPendingDeletion != nil || isShowingEmptyTrashAlert) { _, shouldHold in
+            setDeletePromptHold(shouldHold)
         }
     }
 
@@ -178,10 +192,10 @@ struct ContentView: View {
     private func deleteAlertMessage(for list: TodoList) -> String {
         let count = store.items(in: list.id).count
         if count == 0 {
-            return "This list will be permanently deleted."
+            return "This list will be deleted."
         }
         let taskWord = count == 1 ? "task" : "tasks"
-        return "This list and its \(count) \(taskWord) will be permanently deleted."
+        return "This list will be deleted and its \(count) \(taskWord) will move to Trash."
     }
 
     private func setDeletePromptHold(_ hold: Bool) {
@@ -219,15 +233,15 @@ struct ContentView: View {
                     .padding(.bottom, 10)
             }
 
-            if store.lists.isEmpty {
+            if store.lists.isEmpty && !store.isTrashSelected && !store.hasTrashedItems {
                 noListsEmptyState
             } else if sortedItems.isEmpty {
-                emptyState
+                currentEmptyState
             } else {
                 taskList
             }
 
-            if store.selectedListID != nil {
+            if store.selectedListID != nil && !store.isTrashSelected {
                 inputBar
             }
         }
@@ -237,7 +251,7 @@ struct ContentView: View {
 
     private var header: some View {
         HStack(alignment: .top, spacing: 6) {
-            if store.lists.isEmpty {
+            if store.lists.isEmpty && !store.isTrashSelected && !store.hasTrashedItems {
                 Text("No lists yet")
                     .font(.system(size: tweaks.secondaryTextSize))
                     .foregroundStyle(FloatDoTheme.textSecondary)
@@ -247,12 +261,14 @@ struct ContentView: View {
             } else {
                 ListsDropdownView(
                     lists: store.lists,
+                    trashList: TodoList.trashList,
                     selectedID: store.selectedListID,
                     autoFocusRenameID: pendingAutoFocusListID,
                     onSelect: { selectList($0) },
                     onCreate: createList,
                     onRename: { list, name in store.renameList(list, to: name) },
                     onDelete: { deleteList($0) },
+                    onEmptyTrash: { emptyTrash() },
                     onSetIcon: { list, symbol in store.setListIcon(list, to: symbol) },
                     onAutoFocusConsumed: { pendingAutoFocusListID = nil }
                 )
@@ -281,6 +297,10 @@ struct ContentView: View {
         withAnimation(.spring(response: 0.38, dampingFraction: 0.84)) {
             store.deleteList(list)
         }
+    }
+
+    private func emptyTrash() {
+        isShowingEmptyTrashAlert = true
     }
 
     private func selectList(_ id: UUID) {
@@ -321,6 +341,31 @@ struct ContentView: View {
         .animation(.easeInOut(duration: 0.2), value: isInputFocused)
     }
 
+    private var trashEmptyState: some View {
+        VStack(spacing: 8) {
+            Text("Trash is empty.")
+                .font(.system(size: 26, weight: .regular, design: .serif).italic())
+                .tracking(-0.48)
+                .foregroundStyle(FloatDoTheme.textPrimary.opacity(0.95))
+
+            Text("Deleted tasks will wait here until you restore them or empty Trash.")
+                .font(.system(size: tweaks.bodyTextSize))
+                .foregroundStyle(FloatDoTheme.textSecondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private var currentEmptyState: some View {
+        if store.isTrashSelected {
+            trashEmptyState
+        } else {
+            emptyState
+        }
+    }
+
     private var taskList: some View {
         ScrollView {
             LazyVStack(spacing: tweaks.rowSpacing) {
@@ -349,9 +394,11 @@ struct ContentView: View {
     private func taskRow(_ item: TodoItem) -> some View {
         TodoRowView(
             item: item,
+            isTrashItem: store.isTrashSelected,
             isDragging: draggingID == item.id,
             isDragActive: draggingID != nil,
             yOffset: offset(for: item.id),
+            subtitle: store.isTrashSelected ? store.originalListName(for: item) : nil,
             onToggle: {
                 withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
                     store.toggle(item)
@@ -359,9 +406,18 @@ struct ContentView: View {
             },
             onDelete: {
                 withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-                    store.delete(item)
+                    if store.isTrashSelected {
+                        store.permanentlyDelete(item)
+                    } else {
+                        store.moveToTrash(item)
+                    }
                 }
             },
+            onRestore: store.isTrashSelected ? {
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                    store.restore(item)
+                }
+            } : nil,
             onRename: { newTitle in
                 store.rename(item, to: newTitle)
             },
@@ -370,7 +426,8 @@ struct ContentView: View {
             },
             onDragEnded: { translation in
                 commitDrag(for: item.id, translation: translation)
-            }
+            },
+            isReorderEnabled: !store.isTrashSelected
         )
     }
 

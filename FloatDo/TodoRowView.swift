@@ -271,14 +271,18 @@ struct TodoCheckboxToggleStyle: ToggleStyle {
 
 struct TodoRowView: View {
     let item: TodoItem
+    let isTrashItem: Bool
     let isDragging: Bool
     let isDragActive: Bool
     let yOffset: CGFloat
+    var subtitle: String? = nil
     var onToggle: () -> Void
     var onDelete: () -> Void
+    var onRestore: (() -> Void)? = nil
     var onRename: (String) -> Void = { _ in }
     var onDragChanged: (CGFloat) -> Void = { _ in }
     var onDragEnded: (CGFloat) -> Void = { _ in }
+    var isReorderEnabled = true
 
     @State private var isHovering = false
     @State private var didPushCursor = false
@@ -306,31 +310,46 @@ struct TodoRowView: View {
             }
             .toggleStyle(TodoCheckboxToggleStyle())
 
-            ZStack(alignment: .topLeading) {
-                if isEditing {
-                    TextField("Task", text: $draftTitle, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: tweaks.bodyTextSize))
-                        .foregroundStyle(FloatDoTheme.textPrimary)
-                        .lineLimit(1...5)
-                        .focused($isEditorFocused)
-                        .onKeyPress(.return) {
-                            isEditorFocused = false
-                            return .handled
-                        }
-                        .onExitCommand(perform: cancelEdit)
-                        .onAppear { isEditorFocused = true }
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                } else {
-                    Text(item.title)
-                        .font(.system(size: tweaks.bodyTextSize))
-                        .strikethrough(item.isCompleted)
-                        .foregroundStyle(titleColor)
-                        .lineLimit(1...5)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                        .contentShape(Rectangle())
-                        .onTapGesture(count: 2) { isEditing = true }
+            VStack(alignment: .leading, spacing: subtitle == nil ? 0 : 4) {
+                ZStack(alignment: .topLeading) {
+                    if isEditing {
+                        TextField("Task", text: $draftTitle, axis: .vertical)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: tweaks.bodyTextSize))
+                            .foregroundStyle(FloatDoTheme.textPrimary)
+                            .lineLimit(1...5)
+                            .focused($isEditorFocused)
+                            .onKeyPress(.return) {
+                                isEditorFocused = false
+                                return .handled
+                            }
+                            .onExitCommand(perform: cancelEdit)
+                            .onAppear { isEditorFocused = true }
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                    } else {
+                        Text(item.title)
+                            .font(.system(size: tweaks.bodyTextSize))
+                            .strikethrough(item.isCompleted)
+                            .foregroundStyle(titleColor)
+                            .lineLimit(1...5)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                            .contentShape(Rectangle())
+                            .onTapGesture(count: 2) { isEditing = true }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(size: tweaks.secondaryTextSize - 1, weight: .medium))
+                        .foregroundStyle(FloatDoTheme.textSecondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(
+                            Capsule()
+                                .fill(FloatDoTheme.controlFill)
+                        )
                 }
             }
             .frame(minHeight: 18, alignment: .topLeading)
@@ -378,7 +397,7 @@ struct TodoRowView: View {
         .scaleEffect(isDragging ? 1.03 : 1.0)
         .shadow(color: .black.opacity(isDragging ? 0.45 : 0), radius: 16, y: 6)
         .zIndex(isDragging ? 1 : 0)
-        .pointerCursor(hoverCursor, active: !isDragActive)
+        .pointerCursor(hoverCursor, active: !isDragActive && isReorderEnabled)
         .onHover { hovering in
             guard !isDragActive else { return }
             withAnimation(.easeInOut(duration: 0.15)) {
@@ -390,30 +409,55 @@ struct TodoRowView: View {
                 isHovering = false
             }
         }
+        .onChange(of: item.listID) { _, _ in
+            resetTransientRowState()
+        }
+        .onChange(of: isTrashItem) { _, _ in
+            resetTransientRowState()
+        }
         .onChange(of: isEditorFocused) { _, focused in
             if !focused {
                 commitEdit()
                 isEditing = false
             }
         }
-        .task(id: item.id) { draftTitle = item.title }
+        .task(id: item.id) {
+            draftTitle = item.title
+            resetTransientRowState()
+        }
         .onChange(of: item.title) { _, new in
             if !isEditorFocused { draftTitle = new }
         }
         .contextMenu {
-            Button {
-                onToggle()
-            } label: {
-                Label(
-                    item.isCompleted ? "Mark Incomplete" : "Mark Complete",
-                    systemImage: item.isCompleted ? "circle" : "checkmark.circle"
-                )
-            }
-            Divider()
-            Button(role: .destructive) {
-                onDelete()
-            } label: {
-                Label("Delete", systemImage: "trash")
+            if isTrashItem {
+                if let onRestore {
+                    Button {
+                        onRestore()
+                    } label: {
+                        Label("Restore", systemImage: "arrow.uturn.backward")
+                    }
+                }
+                Divider()
+                Button(role: .destructive) {
+                    onDelete()
+                } label: {
+                    Label("Delete Forever", systemImage: "trash")
+                }
+            } else {
+                Button {
+                    onToggle()
+                } label: {
+                    Label(
+                        item.isCompleted ? "Mark Incomplete" : "Mark Complete",
+                        systemImage: item.isCompleted ? "circle" : "checkmark.circle"
+                    )
+                }
+                Divider()
+                Button(role: .destructive) {
+                    onDelete()
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
             }
         }
         .gesture(
@@ -432,7 +476,7 @@ struct TodoRowView: View {
                     }
                     onDragEnded(value.translation.height)
                 },
-            including: isEditing ? .subviews : .all
+            including: (isEditing || !isReorderEnabled) ? .subviews : .all
         )
     }
 
@@ -442,8 +486,8 @@ struct TodoRowView: View {
                 revealPill(
                     width: max(0, swipeOffset - tweaks.pillSpacing),
                     progress: min(1, swipeOffset / commitThreshold),
-                    color: FloatDoTheme.success,
-                    systemImage: "checkmark.circle.fill",
+                    color: isTrashItem ? FloatDoTheme.controlFillStrong : FloatDoTheme.success,
+                    systemImage: isTrashItem ? "arrow.uturn.backward.circle.fill" : "checkmark.circle.fill",
                     alignment: .leading
                 )
             }
@@ -524,7 +568,11 @@ struct TodoRowView: View {
         let revert = Animation.spring(response: 0.38, dampingFraction: 0.82)
 
         if shouldCommit && direction > 0 {
-            onToggle()
+            if isTrashItem {
+                onRestore?()
+            } else {
+                onToggle()
+            }
             withAnimation(revert) { swipeOffset = 0 }
         } else if shouldCommit && direction < 0 {
             withAnimation(.easeOut(duration: 0.18)) {
@@ -554,7 +602,15 @@ struct TodoRowView: View {
         isEditorFocused = false
     }
 
-    private var hoverCursor: NSCursor? { .openHand }
+    private func resetTransientRowState() {
+        swipeOffset = 0
+        hasCommittedHaptic = false
+        isHovering = false
+    }
+
+    private var hoverCursor: NSCursor? {
+        isReorderEnabled ? .openHand : nil
+    }
 
     private var rowBackground: some View {
         let fill: Color

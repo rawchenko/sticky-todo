@@ -16,7 +16,7 @@ struct TodoStoreFile: Codable {
 }
 
 class TodoStore: ObservableObject {
-    static let currentSchemaVersion = 3
+    static let currentSchemaVersion = 4
 
     @Published var items: [TodoItem] = []
     @Published var lists: [TodoList] = []
@@ -37,12 +37,26 @@ class TodoStore: ObservableObject {
 
     var visibleItems: [TodoItem] {
         guard let id = selectedListID else { return [] }
+        if id == TodoList.trashID {
+            return items.filter { $0.isTrashed }
+        }
         return items.filter { $0.listID == id }
+    }
+
+    var isTrashSelected: Bool {
+        selectedListID == TodoList.trashID
+    }
+
+    var hasTrashedItems: Bool {
+        items.contains(where: { $0.isTrashed })
     }
 
     /// Items belonging to the given list, in flat-array order.
     func items(in listID: UUID) -> [TodoItem] {
-        items.filter { $0.listID == listID }
+        if listID == TodoList.trashID {
+            return items.filter { $0.isTrashed }
+        }
+        return items.filter { $0.listID == listID }
     }
 
     func load() {
@@ -61,7 +75,7 @@ class TodoStore: ObservableObject {
             if let file = try? JSONDecoder().decode(TodoStoreFile.self, from: data) {
                 lists = file.lists
                 items = file.todos
-                selectedListID = file.selectedListID ?? file.lists.first?.id
+                selectedListID = normalizedSelection(file.selectedListID)
                 isStorageWritable = true
                 recoveryNotice = nil
                 return
@@ -92,6 +106,7 @@ class TodoStore: ObservableObject {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         guard let listID = selectedListID else { return }
+        guard listID != TodoList.trashID else { return }
         items.append(TodoItem(title: trimmed, listID: listID))
         save()
     }
@@ -112,14 +127,67 @@ class TodoStore: ObservableObject {
     }
 
     func delete(_ item: TodoItem) {
-        items.removeAll { $0.id == item.id }
+        moveToTrash(item)
+    }
+
+    func moveToTrash(_ item: TodoItem) {
+        guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
+        moveItemToTrash(at: idx)
         save()
+    }
+
+    func restore(_ item: TodoItem) {
+        guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
+        guard items[idx].isTrashed else { return }
+
+        let priorSelection = selectedListID
+        let targetListID: UUID
+        if let originalListID = items[idx].trashedOriginalListID,
+           lists.contains(where: { $0.id == originalListID }) {
+            targetListID = originalListID
+        } else {
+            let recreatedList = TodoList(name: restoreListName(for: items[idx]))
+            lists.append(recreatedList)
+            targetListID = recreatedList.id
+        }
+
+        items[idx].listID = targetListID
+        items[idx].trashedAt = nil
+        items[idx].trashedOriginalListID = nil
+        items[idx].trashedOriginalListName = nil
+        selectedListID = priorSelection
+        save()
+    }
+
+    func permanentlyDelete(_ item: TodoItem) {
+        items.removeAll { $0.id == item.id }
+        if selectedListID == TodoList.trashID && lists.isEmpty && !hasTrashedItems {
+            selectedListID = nil
+        }
+        save()
+    }
+
+    func emptyTrash() {
+        items.removeAll(where: { $0.isTrashed })
+        if selectedListID == TodoList.trashID && lists.isEmpty {
+            selectedListID = nil
+        }
+        save()
+    }
+
+    func originalListName(for item: TodoItem) -> String {
+        if let originalListID = item.trashedOriginalListID,
+           let liveName = listName(for: originalListID) {
+            return liveName
+        }
+        return item.trashedOriginalListName ?? listName(for: item.listID) ?? TodoList.defaultName
     }
 
     /// Reorder an item within the currently selected list. Indices refer to
     /// positions in `items(in: selectedListID)`.
     func move(from: Int, to: Int) {
         guard let listID = selectedListID else { return }
+        guard listID != TodoList.trashID else { return }
         let listItems = items(in: listID)
         guard listItems.indices.contains(from), from != to else { return }
 
@@ -177,11 +245,14 @@ class TodoStore: ObservableObject {
     }
 
     func deleteList(_ list: TodoList) {
+        guard list.id != TodoList.trashID else { return }
         guard let idx = lists.firstIndex(where: { $0.id == list.id }) else { return }
-        items.removeAll { $0.listID == list.id }
+        for itemIndex in items.indices where items[itemIndex].listID == list.id {
+            moveItemToTrash(at: itemIndex, originalList: list)
+        }
         lists.remove(at: idx)
         if selectedListID == list.id {
-            selectedListID = lists.first?.id
+            selectedListID = lists.first?.id ?? TodoList.trashID
         }
         save()
     }
@@ -196,6 +267,7 @@ class TodoStore: ObservableObject {
     }
 
     func selectList(_ id: UUID?) {
+        guard id == nil || id == TodoList.trashID || lists.contains(where: { $0.id == id }) else { return }
         guard selectedListID != id else { return }
         selectedListID = id
         save()
@@ -209,6 +281,9 @@ class TodoStore: ObservableObject {
         items = legacyItems.map { item in
             var copy = item
             copy.listID = defaultList.id
+            copy.trashedAt = nil
+            copy.trashedOriginalListID = nil
+            copy.trashedOriginalListName = nil
             return copy
         }
         selectedListID = defaultList.id
@@ -270,6 +345,45 @@ class TodoStore: ObservableObject {
             uniqueCandidate.appendPathExtension(pathExtension)
         }
         return uniqueCandidate
+    }
+
+    private func normalizedSelection(_ candidate: UUID?) -> UUID? {
+        if candidate == TodoList.trashID {
+            return TodoList.trashID
+        }
+        if let candidate, lists.contains(where: { $0.id == candidate }) {
+            return candidate
+        }
+        if let firstListID = lists.first?.id {
+            return firstListID
+        }
+        return hasTrashedItems ? TodoList.trashID : nil
+    }
+
+    private func restoreListName(for item: TodoItem) -> String {
+        let trimmed = item.trashedOriginalListName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? "Tasks" : trimmed
+    }
+
+    private func listName(for id: UUID?) -> String? {
+        guard let id else { return nil }
+        if id == TodoList.trashID {
+            return TodoList.trashName
+        }
+        return lists.first(where: { $0.id == id })?.name
+    }
+
+    private func moveItemToTrash(at index: Int, originalList: TodoList? = nil) {
+        guard items.indices.contains(index) else { return }
+        guard !items[index].isTrashed else { return }
+
+        let originalListID = items[index].listID
+        let originalListName = originalList?.name ?? listName(for: originalListID) ?? TodoList.defaultName
+
+        items[index].listID = TodoList.trashID
+        items[index].trashedAt = Date()
+        items[index].trashedOriginalListID = originalListID
+        items[index].trashedOriginalListName = originalListName
     }
 
     private static func defaultFileURL(fileManager: FileManager) -> URL {

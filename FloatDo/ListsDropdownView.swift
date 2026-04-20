@@ -3,12 +3,14 @@ import AppKit
 
 struct ListsDropdownView: View {
     let lists: [TodoList]
+    let trashList: TodoList
     let selectedID: UUID?
     let autoFocusRenameID: UUID?
     var onSelect: (UUID) -> Void
     var onCreate: () -> Void
     var onRename: (TodoList, String) -> Void
     var onDelete: (TodoList) -> Void
+    var onEmptyTrash: () -> Void
     var onSetIcon: (TodoList, String) -> Void
     var onAutoFocusConsumed: () -> Void
 
@@ -23,9 +25,17 @@ struct ListsDropdownView: View {
     @ObservedObject private var tweaks = LayoutTweaks.shared
     @EnvironmentObject private var panelManager: PanelManager
 
+    private var allLists: [TodoList] {
+        lists + [trashList]
+    }
+
     private var selected: TodoList? {
-        guard let id = selectedID else { return nil }
-        return lists.first(where: { $0.id == id })
+        guard let id = selectedID else { return allLists.first }
+        return allLists.first(where: { $0.id == id }) ?? allLists.first
+    }
+
+    private var isTrashSelected: Bool {
+        selected?.id == trashList.id
     }
 
     var body: some View {
@@ -46,7 +56,7 @@ struct ListsDropdownView: View {
             }
         }
         .popover(isPresented: $isShowingIconPicker, arrowEdge: .bottom) {
-            if let list = selected {
+            if let list = selected, list.id != trashList.id {
                 ListIconPickerView(
                     selected: list.icon,
                     onPick: { symbol in
@@ -147,6 +157,9 @@ struct ListsDropdownView: View {
     }
 
     private var triggerBackground: Color {
+        if isTrashSelected && !isShowingMenu && !isTriggerHovering {
+            return FloatDoTheme.controlFill
+        }
         if isShowingMenu { return FloatDoTheme.controlFillStrong }
         if isTriggerHovering { return FloatDoTheme.rowHover }
         return FloatDoTheme.tabActiveFill
@@ -192,7 +205,7 @@ struct ListsDropdownView: View {
     @ViewBuilder
     private func menuContent(for current: TodoList) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            ForEach(lists) { item in
+            ForEach(allLists) { item in
                 DropdownListRow(
                     list: item,
                     isSelected: item.id == current.id,
@@ -217,31 +230,43 @@ struct ListsDropdownView: View {
             Divider()
                 .padding(.vertical, 4)
 
-            DropdownActionRow(
-                title: "Rename",
-                systemImage: "pencil",
-                action: {
-                    isShowingMenu = false
-                    DispatchQueue.main.async { beginEdit(current) }
-                }
-            )
-            DropdownActionRow(
-                title: "Change icon",
-                systemImage: "square.grid.2x2",
-                action: {
-                    isShowingMenu = false
-                    DispatchQueue.main.async { isShowingIconPicker = true }
-                }
-            )
-            DropdownActionRow(
-                title: "Delete list",
-                systemImage: "trash",
-                role: .destructive,
-                action: {
-                    isShowingMenu = false
-                    onDelete(current)
-                }
-            )
+            if current.id == trashList.id {
+                DropdownActionRow(
+                    title: "Empty Trash",
+                    systemImage: "trash",
+                    role: .destructive,
+                    action: {
+                        isShowingMenu = false
+                        onEmptyTrash()
+                    }
+                )
+            } else {
+                DropdownActionRow(
+                    title: "Rename",
+                    systemImage: "pencil",
+                    action: {
+                        isShowingMenu = false
+                        DispatchQueue.main.async { beginEdit(current) }
+                    }
+                )
+                DropdownActionRow(
+                    title: "Change icon",
+                    systemImage: "square.grid.2x2",
+                    action: {
+                        isShowingMenu = false
+                        DispatchQueue.main.async { isShowingIconPicker = true }
+                    }
+                )
+                DropdownActionRow(
+                    title: "Delete list",
+                    systemImage: "trash",
+                    role: .destructive,
+                    action: {
+                        isShowingMenu = false
+                        onDelete(current)
+                    }
+                )
+            }
         }
         .padding(6)
         .frame(minWidth: 200)
@@ -250,6 +275,7 @@ struct ListsDropdownView: View {
     // MARK: - Edit helpers
 
     private func beginEdit(_ list: TodoList) {
+        guard list.id != trashList.id else { return }
         draftName = list.name
         isEditing = true
         DispatchQueue.main.async {
