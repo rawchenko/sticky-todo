@@ -276,6 +276,8 @@ struct TodoRowView: View {
     let isDragActive: Bool
     let yOffset: CGFloat
     var subtitle: String? = nil
+    var completionOverride: Bool? = nil
+    var isExiting = false
     var onToggle: () -> Void
     var onDelete: () -> Void
     var onRestore: (() -> Void)? = nil
@@ -294,7 +296,6 @@ struct TodoRowView: View {
     @State private var hasCommittedHaptic = false
     @State private var rowWidth: CGFloat = 0
     @State private var isEditing = false
-    @FocusState private var isEditorFocused: Bool
     @ObservedObject private var tweaks = LayoutTweaks.shared
 
     private enum SwipeRestSide { case leading, trailing }
@@ -302,9 +303,10 @@ struct TodoRowView: View {
     private var commitThreshold: CGFloat { max(110, rowWidth * 0.5) }
     private var revealThreshold: CGFloat { 28 }
     private var revealWidth: CGFloat { 72 }
+    private var displayedIsCompleted: Bool { completionOverride ?? item.isCompleted }
 
     private var titleColor: Color {
-        item.isCompleted ? FloatListTheme.textSecondary : FloatListTheme.textPrimary
+        displayedIsCompleted ? FloatListTheme.textSecondary : FloatListTheme.textPrimary
     }
 
     var body: some View {
@@ -314,25 +316,27 @@ struct TodoRowView: View {
             VStack(alignment: .leading, spacing: subtitle == nil ? 0 : 4) {
                 ZStack(alignment: .topLeading) {
                     if isEditing {
-                        TextField("Task", text: $draftTitle, axis: .vertical)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: tweaks.bodyTextSize))
-                            .foregroundStyle(FloatListTheme.textPrimary)
-                            .lineLimit(1...5)
-                            .focused($isEditorFocused)
-                            .onKeyPress(.return) {
-                                isEditorFocused = false
-                                return .handled
-                            }
-                            .onExitCommand(perform: cancelEdit)
-                            .onAppear { isEditorFocused = true }
-                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                        AutoGrowingInputField(
+                            text: $draftTitle,
+                            placeholder: "Task",
+                            font: NSFont.systemFont(ofSize: tweaks.bodyTextSize),
+                            textColor: NSColor(FloatListTheme.textPrimary),
+                            placeholderColor: .placeholderTextColor,
+                            maxLines: 5,
+                            onSubmit: commitAndExit,
+                            onCancel: cancelEdit,
+                            onFocusChange: { focused in
+                                if !focused && isEditing { commitAndExit() }
+                            },
+                            focusOnAppear: true
+                        )
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
                     } else {
                         Text(item.title)
                             .font(.system(size: tweaks.bodyTextSize))
-                            .strikethrough(item.isCompleted)
+                            .strikethrough(displayedIsCompleted)
                             .foregroundStyle(titleColor)
-                            .lineLimit(1...5)
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .topLeading)
                             .contentShape(Rectangle())
@@ -362,7 +366,7 @@ struct TodoRowView: View {
         .background(
             ClickOutsideDetector(isActive: isEditing || swipeRest != nil) {
                 if isEditing {
-                    isEditorFocused = false
+                    commitAndExit()
                 }
                 if swipeRest != nil {
                     closeReveal()
@@ -404,12 +408,15 @@ struct TodoRowView: View {
             }
         )
         .contentShape(Rectangle())
-        .brightness(isDragging ? 0.04 : 0)
+        .allowsHitTesting(!isExiting)
+        .opacity(isExiting ? 0.78 : 1)
+        .brightness(isDragging ? 0.04 : (isExiting ? -0.01 : 0))
         .offset(y: yOffset)
-        .scaleEffect(isDragging ? 1.03 : 1.0)
+        .scaleEffect(isDragging ? 1.03 : (isExiting ? 0.992 : 1.0), anchor: .topLeading)
         .shadow(color: .black.opacity(isDragging ? 0.45 : 0), radius: 16, y: 6)
         .zIndex(isDragging ? 1 : 0)
         .pointerCursor(hoverCursor, active: !isDragActive && isReorderEnabled)
+        .animation(.easeOut(duration: 0.18), value: isExiting)
         .onHover { hovering in
             guard !isDragActive else { return }
             withAnimation(.easeInOut(duration: 0.15)) {
@@ -427,18 +434,12 @@ struct TodoRowView: View {
         .onChange(of: isTrashItem) { _, _ in
             resetTransientRowState()
         }
-        .onChange(of: isEditorFocused) { _, focused in
-            if !focused {
-                commitEdit()
-                isEditing = false
-            }
-        }
         .task(id: item.id) {
             draftTitle = item.title
             resetTransientRowState()
         }
         .onChange(of: item.title) { _, new in
-            if !isEditorFocused { draftTitle = new }
+            if !isEditing { draftTitle = new }
         }
         .contextMenu {
             if isTrashItem {
@@ -494,7 +495,7 @@ struct TodoRowView: View {
 
     private var checkbox: some View {
         Toggle(isOn: Binding(
-            get: { item.isCompleted },
+            get: { displayedIsCompleted },
             set: { _ in onToggle() }
         )) {
             EmptyView()
@@ -679,7 +680,12 @@ struct TodoRowView: View {
 
     private func cancelEdit() {
         draftTitle = item.title
-        isEditorFocused = false
+        isEditing = false
+    }
+
+    private func commitAndExit() {
+        commitEdit()
+        isEditing = false
     }
 
     private func resetTransientRowState() {
@@ -698,6 +704,8 @@ struct TodoRowView: View {
         let fill: Color
         if isDragging || isEditing {
             fill = FloatListTheme.controlFillStrong
+        } else if isExiting {
+            fill = FloatListTheme.controlFill.opacity(0.55)
         } else if isHovering && !isDragActive {
             fill = FloatListTheme.rowHover
         } else {

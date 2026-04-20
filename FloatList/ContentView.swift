@@ -132,6 +132,7 @@ struct ContentView: View {
     @ObservedObject var store: TodoStore
     @ObservedObject var panelManager: PanelManager
     @ObservedObject private var tweaks = LayoutTweaks.shared
+    @State private var pendingToggleAnimations: [UUID: PendingToggleAnimation] = [:]
     @State private var newTaskTitle = ""
     @State private var dismissedRecoveryNoticeID: UUID?
     @State private var draggingID: UUID?
@@ -147,9 +148,19 @@ struct ContentView: View {
     @State private var isHoldingForDeletePrompt = false
     @State private var expandedCompletedListIDs: Set<UUID> = []
     @State private var hoveredCompletedToggleListID: UUID?
-    @FocusState private var isInputFocused: Bool
+    @State private var isHoldingForInput = false
+
+    private var hasInputDraft: Bool {
+        newTaskTitle.contains { !$0.isWhitespace && !$0.isNewline }
+    }
 
     private static let reorderAnimation = Animation.spring(response: 0.35, dampingFraction: 0.78)
+    private static let rowToggleExitAnimation = Animation.easeOut(duration: 0.18)
+    private static let rowToggleCommitDelayNanoseconds: UInt64 = 260_000_000
+
+    private struct PendingToggleAnimation: Equatable {
+        let targetCompleted: Bool
+    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -190,6 +201,10 @@ struct ContentView: View {
             removeEscapeMonitor()
             removeUndoMonitor()
             releaseDeletePromptHoldIfNeeded()
+            setInputHoverHold(false)
+        }
+        .onChange(of: hasInputDraft) { _, hold in
+            setInputHoverHold(hold)
         }
         .alert(
             deleteAlertTitle,
@@ -253,6 +268,16 @@ struct ContentView: View {
     private func releaseDeletePromptHoldIfNeeded() {
         if isHoldingForDeletePrompt {
             isHoldingForDeletePrompt = false
+            panelManager.popHoverHold()
+        }
+    }
+
+    private func setInputHoverHold(_ hold: Bool) {
+        guard hold != isHoldingForInput else { return }
+        isHoldingForInput = hold
+        if hold {
+            panelManager.pushHoverHold()
+        } else {
             panelManager.popHoverHold()
         }
     }
@@ -405,13 +430,13 @@ struct ContentView: View {
                 .tracking(-0.56)
                 .foregroundStyle(FloatListTheme.textPrimary.opacity(0.95))
 
-            Text(isInputFocused ? "Press ⏎ to add" : "Type a task below")
+            Text(hasInputDraft ? "Press ⏎ to add" : "Type a task below")
                 .font(.system(size: tweaks.bodyTextSize))
                 .foregroundStyle(FloatListTheme.textSecondary)
         }
-        .opacity(isInputFocused ? 0.42 : 0.7)
+        .opacity(hasInputDraft ? 0.42 : 0.7)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .animation(.easeInOut(duration: 0.2), value: isInputFocused)
+        .animation(.easeInOut(duration: 0.2), value: hasInputDraft)
     }
 
     private var trashEmptyState: some View {
@@ -500,6 +525,7 @@ struct ContentView: View {
             .onChange(of: store.items.map(\.id)) { _, ids in
                 let live = Set(ids)
                 rowHeights = rowHeights.filter { live.contains($0.key) }
+                pendingToggleAnimations = pendingToggleAnimations.filter { live.contains($0.key) }
             }
             .onChange(of: store.selectedListID) {
                 cancelDrag()
@@ -514,6 +540,7 @@ struct ContentView: View {
         isReorderEnabled: Bool? = nil
     ) -> some View {
         let isTrashItem = store.isTrashSelected
+        let pendingToggleAnimation = pendingToggleAnimations[item.id]
         return TodoRowView(
             item: item,
             isTrashItem: isTrashItem,
@@ -521,10 +548,10 @@ struct ContentView: View {
             isDragActive: draggingID != nil,
             yOffset: offset(for: item.id),
             subtitle: subtitle,
+            completionOverride: pendingToggleAnimation?.targetCompleted,
+            isExiting: pendingToggleAnimation != nil,
             onToggle: {
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-                    store.toggle(item)
-                }
+                handleToggle(for: item)
             },
             onDelete: {
                 withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
@@ -549,7 +576,7 @@ struct ContentView: View {
             onDragEnded: { translation in
                 commitDrag(for: item.id, translation: translation)
             },
-            isToggleEnabled: !isTrashItem,
+            isToggleEnabled: !isTrashItem && pendingToggleAnimation == nil,
             isReorderEnabled: isReorderEnabled ?? !store.isSpecialListSelected
         )
         .id(RowRenderIdentity(
@@ -563,26 +590,25 @@ struct ContentView: View {
 
     private var inputBar: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            TextField(
-                sortedItems.isEmpty ? "What's your first task?" : "What's next?",
+            AutoGrowingInputField(
                 text: $newTaskTitle,
-                axis: .vertical
+                placeholder: sortedItems.isEmpty ? "What's your first task?" : "What's next?",
+                font: NSFont.systemFont(ofSize: tweaks.bodyTextSize),
+                textColor: NSColor(FloatListTheme.textPrimary),
+                placeholderColor: .placeholderTextColor,
+                maxLines: 5,
+                onSubmit: submitTask
             )
-                .textFieldStyle(.plain)
-                .font(.system(size: tweaks.bodyTextSize))
-                .foregroundStyle(FloatListTheme.textPrimary)
-                .lineLimit(1...5)
-                .focused($isInputFocused)
-                .onSubmit(submitTask)
-                .padding(.vertical, 4)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
 
             Button(action: submitTask) {
                 Image(systemName: "arrow.up")
             }
-            .floatListGlassButton(prominent: canSubmit)
-            .disabled(!canSubmit)
-            .pointerCursor(canSubmit ? .pointingHand : nil)
-            .animation(.easeInOut(duration: 0.15), value: canSubmit)
+            .floatListGlassButton(prominent: hasInputDraft)
+            .disabled(!hasInputDraft)
+            .pointerCursor(hasInputDraft ? .pointingHand : nil)
+            .animation(.easeInOut(duration: 0.15), value: hasInputDraft)
         }
         .padding(.leading, tweaks.inputLeadingPadding)
         .padding(.trailing, tweaks.inputTrailingPadding)
@@ -593,10 +619,6 @@ struct ContentView: View {
         .padding(.horizontal, 6)
         .padding(.bottom, 6)
         .animation(.easeOut(duration: 0.18), value: newTaskTitle)
-    }
-
-    private var canSubmit: Bool {
-        !newTaskTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func submitTask() {
@@ -698,15 +720,15 @@ struct ContentView: View {
                 .tracking(-0.48)
                 .foregroundStyle(FloatListTheme.textPrimary.opacity(0.95))
 
-            Text(isInputFocused ? "Press ⏎ to add" : "Type a task below")
+            Text(hasInputDraft ? "Press ⏎ to add" : "Type a task below")
                 .font(.system(size: tweaks.bodyTextSize))
                 .foregroundStyle(FloatListTheme.textSecondary)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 18)
         .frame(maxWidth: .infinity)
-        .opacity(isInputFocused ? 0.42 : 0.7)
-        .animation(.easeInOut(duration: 0.2), value: isInputFocused)
+        .opacity(hasInputDraft ? 0.42 : 0.7)
+        .animation(.easeInOut(duration: 0.2), value: hasInputDraft)
     }
 
     private func completedToggleButton(for listID: UUID, count: Int) -> some View {
@@ -768,6 +790,26 @@ struct ContentView: View {
         let isCompleted: Bool
         let isTrashItem: Bool
         let subtitle: String?
+    }
+
+    private func handleToggle(for item: TodoItem) {
+        guard pendingToggleAnimations[item.id] == nil else { return }
+
+        let pendingAnimation = PendingToggleAnimation(targetCompleted: !item.isCompleted)
+        withAnimation(Self.rowToggleExitAnimation) {
+            pendingToggleAnimations[item.id] = pendingAnimation
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: Self.rowToggleCommitDelayNanoseconds)
+
+            guard pendingToggleAnimations[item.id] == pendingAnimation else { return }
+
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                store.toggle(item)
+                pendingToggleAnimations.removeValue(forKey: item.id)
+            }
+        }
     }
 
     // MARK: - Drag
