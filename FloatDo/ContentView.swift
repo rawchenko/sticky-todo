@@ -41,14 +41,23 @@ private struct SettingsButton: View {
     @State private var spinCount = 0
     @ObservedObject private var tweaks = LayoutTweaks.shared
 
+    private var pillContentHeight: CGFloat {
+        let textLineHeight = NSFont.systemFont(ofSize: tweaks.bodyTextSize, weight: .medium)
+            .boundingRectForFont
+            .height
+            .rounded(.up)
+        let chevronSize = max(tweaks.secondaryTextSize - 2, 8)
+        return max(textLineHeight, tweaks.listIconSize, chevronSize)
+    }
+
     var body: some View {
         Button(action: openSettings) {
             Image(systemName: "gearshape")
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(FloatDoTheme.textSecondary)
+                .foregroundStyle(FloatDoTheme.textPrimary)
                 .symbolRenderingMode(.hierarchical)
                 .rotationEffect(.degrees(Double(spinCount) * 60))
-                .frame(width: 14, height: 14)
+                .frame(width: pillContentHeight, height: pillContentHeight)
                 .padding(.horizontal, tweaks.pillHorizontalPadding)
                 .padding(.vertical, tweaks.pillVerticalPadding)
                 .background(
