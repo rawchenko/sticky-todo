@@ -108,7 +108,7 @@ struct ListsDropdownView: View {
                 .font(.system(size: tweaks.bodyTextSize, weight: .medium))
                 .foregroundStyle(FloatDoTheme.textPrimary)
                 .lineLimit(1)
-                .fixedSize()
+                .truncationMode(.tail)
 
             Image(systemName: "chevron.down")
                 .font(.system(size: max(tweaks.secondaryTextSize - 2, 8), weight: .semibold))
@@ -171,7 +171,6 @@ struct ListsDropdownView: View {
                 .onSubmit { commitEdit(list) }
                 .onExitCommand(perform: cancelEdit)
                 .frame(minWidth: 80, idealWidth: 120)
-                .fixedSize()
         }
         .padding(.horizontal, tweaks.pillHorizontalPadding)
         .padding(.vertical, tweaks.pillVerticalPadding)
