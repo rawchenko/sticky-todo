@@ -112,13 +112,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 460, height: 520),
-                styleMask: [.titled, .closable, .miniaturizable],
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
                 backing: .buffered,
                 defer: false
             )
             window.title = "FloatDo Settings"
             window.contentView = NSHostingView(rootView: SettingsView())
             window.isReleasedWhenClosed = false
+            window.minSize = NSSize(width: 420, height: 420)
             window.center()
 
             settingsWindow = window
