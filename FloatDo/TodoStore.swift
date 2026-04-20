@@ -38,25 +38,51 @@ class TodoStore: ObservableObject {
     var visibleItems: [TodoItem] {
         guard let id = selectedListID else { return [] }
         if id == TodoList.trashID {
-            return items.filter { $0.isTrashed }
+            return trashedItems
         }
-        return items.filter { $0.listID == id }
+        if id == TodoList.completedID {
+            return completedItems
+        }
+        return activeItems(in: id)
     }
 
     var isTrashSelected: Bool {
         selectedListID == TodoList.trashID
     }
 
+    var isCompletedSelected: Bool {
+        selectedListID == TodoList.completedID
+    }
+
+    var isSpecialListSelected: Bool {
+        isTrashSelected || isCompletedSelected
+    }
+
     var hasTrashedItems: Bool {
         items.contains(where: { $0.isTrashed })
     }
 
+    var hasCompletedItems: Bool {
+        items.contains(where: { $0.isCompleted && !$0.isTrashed })
+    }
+
     /// Items belonging to the given list, in flat-array order.
     func items(in listID: UUID) -> [TodoItem] {
+        if listID == TodoList.completedID {
+            return completedItems
+        }
         if listID == TodoList.trashID {
-            return items.filter { $0.isTrashed }
+            return trashedItems
         }
         return items.filter { $0.listID == listID }
+    }
+
+    func activeItems(in listID: UUID) -> [TodoItem] {
+        items.filter { $0.listID == listID && !$0.isCompleted && !$0.isTrashed }
+    }
+
+    func completedItems(in listID: UUID) -> [TodoItem] {
+        items.filter { $0.listID == listID && $0.isCompleted && !$0.isTrashed }
     }
 
     func load() {
@@ -106,7 +132,7 @@ class TodoStore: ObservableObject {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         guard let listID = selectedListID else { return }
-        guard listID != TodoList.trashID else { return }
+        guard !isSpecialListID(listID) else { return }
         items.append(TodoItem(title: trimmed, listID: listID))
         save()
     }
@@ -122,7 +148,17 @@ class TodoStore: ObservableObject {
 
     func toggle(_ item: TodoItem) {
         guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
-        items[idx].isCompleted.toggle()
+        guard let listID = items[idx].listID, !isSpecialListID(listID) else { return }
+
+        var updated = items.remove(at: idx)
+        updated.isCompleted.toggle()
+
+        let destination = insertionIndex(
+            for: listID,
+            insertingCompleted: updated.isCompleted,
+            fallback: idx
+        )
+        items.insert(updated, at: destination)
         save()
     }
 
@@ -183,21 +219,30 @@ class TodoStore: ObservableObject {
         return item.trashedOriginalListName ?? listName(for: item.listID) ?? TodoList.defaultName
     }
 
+    func sourceListName(for item: TodoItem) -> String {
+        if item.isTrashed {
+            return originalListName(for: item)
+        }
+        return listName(for: item.listID) ?? TodoList.defaultName
+    }
+
     /// Reorder an item within the currently selected list. Indices refer to
-    /// positions in `items(in: selectedListID)`.
+    /// positions in the visible incomplete items of the selected regular list.
     func move(from: Int, to: Int) {
         guard let listID = selectedListID else { return }
-        guard listID != TodoList.trashID else { return }
-        let listItems = items(in: listID)
+        guard !isSpecialListID(listID) else { return }
+        let listItems = activeItems(in: listID)
         guard listItems.indices.contains(from), from != to else { return }
 
         let moving = listItems[from]
         items.removeAll { $0.id == moving.id }
 
-        let newListItems = items(in: listID)
+        let newListItems = activeItems(in: listID)
         let destinationAbsolute: Int
         if to >= newListItems.count {
-            if let lastListIdx = items.lastIndex(where: { $0.listID == listID }) {
+            if let firstCompletedIdx = items.firstIndex(where: { $0.listID == listID && $0.isCompleted }) {
+                destinationAbsolute = firstCompletedIdx
+            } else if let lastListIdx = items.lastIndex(where: { $0.listID == listID }) {
                 destinationAbsolute = lastListIdx + 1
             } else {
                 destinationAbsolute = items.count
@@ -245,14 +290,14 @@ class TodoStore: ObservableObject {
     }
 
     func deleteList(_ list: TodoList) {
-        guard list.id != TodoList.trashID else { return }
+        guard !isSpecialListID(list.id) else { return }
         guard let idx = lists.firstIndex(where: { $0.id == list.id }) else { return }
         for itemIndex in items.indices where items[itemIndex].listID == list.id {
             moveItemToTrash(at: itemIndex, originalList: list)
         }
         lists.remove(at: idx)
         if selectedListID == list.id {
-            selectedListID = lists.first?.id ?? TodoList.trashID
+            selectedListID = lists.first?.id ?? fallbackVirtualSelection()
         }
         save()
     }
@@ -267,7 +312,7 @@ class TodoStore: ObservableObject {
     }
 
     func selectList(_ id: UUID?) {
-        guard id == nil || id == TodoList.trashID || lists.contains(where: { $0.id == id }) else { return }
+        guard id == nil || isSpecialListID(id) || lists.contains(where: { $0.id == id }) else { return }
         guard selectedListID != id else { return }
         selectedListID = id
         save()
@@ -348,8 +393,8 @@ class TodoStore: ObservableObject {
     }
 
     private func normalizedSelection(_ candidate: UUID?) -> UUID? {
-        if candidate == TodoList.trashID {
-            return TodoList.trashID
+        if isSpecialListID(candidate) {
+            return candidate
         }
         if let candidate, lists.contains(where: { $0.id == candidate }) {
             return candidate
@@ -357,7 +402,7 @@ class TodoStore: ObservableObject {
         if let firstListID = lists.first?.id {
             return firstListID
         }
-        return hasTrashedItems ? TodoList.trashID : nil
+        return fallbackVirtualSelection()
     }
 
     private func restoreListName(for item: TodoItem) -> String {
@@ -367,10 +412,21 @@ class TodoStore: ObservableObject {
 
     private func listName(for id: UUID?) -> String? {
         guard let id else { return nil }
+        if id == TodoList.completedID {
+            return TodoList.completedName
+        }
         if id == TodoList.trashID {
             return TodoList.trashName
         }
         return lists.first(where: { $0.id == id })?.name
+    }
+
+    private var completedItems: [TodoItem] {
+        items.filter { $0.isCompleted && !$0.isTrashed }
+    }
+
+    private var trashedItems: [TodoItem] {
+        items.filter(\.isTrashed)
     }
 
     private func moveItemToTrash(at index: Int, originalList: TodoList? = nil) {
@@ -384,6 +440,37 @@ class TodoStore: ObservableObject {
         items[index].trashedAt = Date()
         items[index].trashedOriginalListID = originalListID
         items[index].trashedOriginalListName = originalListName
+    }
+
+    private func insertionIndex(for listID: UUID, insertingCompleted: Bool, fallback: Int) -> Int {
+        if insertingCompleted {
+            if let lastListIdx = items.lastIndex(where: { $0.listID == listID }) {
+                return lastListIdx + 1
+            }
+        } else {
+            if let firstCompletedIdx = items.firstIndex(where: { $0.listID == listID && $0.isCompleted }) {
+                return firstCompletedIdx
+            }
+            if let lastListIdx = items.lastIndex(where: { $0.listID == listID }) {
+                return lastListIdx + 1
+            }
+        }
+
+        return min(fallback, items.count)
+    }
+
+    private func fallbackVirtualSelection() -> UUID? {
+        if hasCompletedItems {
+            return TodoList.completedID
+        }
+        if hasTrashedItems {
+            return TodoList.trashID
+        }
+        return nil
+    }
+
+    private func isSpecialListID(_ id: UUID?) -> Bool {
+        id == TodoList.completedID || id == TodoList.trashID
     }
 
     private static func defaultFileURL(fileManager: FileManager) -> URL {

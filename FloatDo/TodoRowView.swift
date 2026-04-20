@@ -282,6 +282,7 @@ struct TodoRowView: View {
     var onRename: (String) -> Void = { _ in }
     var onDragChanged: (CGFloat) -> Void = { _ in }
     var onDragEnded: (CGFloat) -> Void = { _ in }
+    var isToggleEnabled = true
     var isReorderEnabled = true
 
     @State private var isHovering = false
@@ -302,13 +303,7 @@ struct TodoRowView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: tweaks.rowInnerSpacing) {
-            Toggle(isOn: Binding(
-                get: { item.isCompleted },
-                set: { _ in onToggle() }
-            )) {
-                EmptyView()
-            }
-            .toggleStyle(TodoCheckboxToggleStyle())
+            checkbox
 
             VStack(alignment: .leading, spacing: subtitle == nil ? 0 : 4) {
                 ZStack(alignment: .topLeading) {
@@ -478,6 +473,17 @@ struct TodoRowView: View {
                 },
             including: (isEditing || !isReorderEnabled) ? .subviews : .all
         )
+    }
+
+    private var checkbox: some View {
+        Toggle(isOn: Binding(
+            get: { item.isCompleted },
+            set: { _ in onToggle() }
+        )) {
+            EmptyView()
+        }
+        .toggleStyle(TodoCheckboxToggleStyle())
+        .allowsHitTesting(isToggleEnabled)
     }
 
     private var swipeRevealLayer: some View {

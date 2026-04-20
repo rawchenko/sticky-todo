@@ -3,6 +3,7 @@ import AppKit
 
 struct ListsDropdownView: View {
     let lists: [TodoList]
+    let completedList: TodoList
     let trashList: TodoList
     let selectedID: UUID?
     let autoFocusRenameID: UUID?
@@ -26,7 +27,11 @@ struct ListsDropdownView: View {
     @EnvironmentObject private var panelManager: PanelManager
 
     private var allLists: [TodoList] {
-        lists + [trashList]
+        lists + [completedList, trashList]
+    }
+
+    private var specialLists: [TodoList] {
+        [completedList, trashList]
     }
 
     private var selected: TodoList? {
@@ -34,8 +39,9 @@ struct ListsDropdownView: View {
         return allLists.first(where: { $0.id == id }) ?? allLists.first
     }
 
-    private var isTrashSelected: Bool {
-        selected?.id == trashList.id
+    private var isSpecialSelected: Bool {
+        guard let id = selected?.id else { return false }
+        return id == completedList.id || id == trashList.id
     }
 
     var body: some View {
@@ -56,7 +62,7 @@ struct ListsDropdownView: View {
             }
         }
         .popover(isPresented: $isShowingIconPicker, arrowEdge: .bottom) {
-            if let list = selected, list.id != trashList.id {
+            if let list = selected, !isSpecialList(list) {
                 ListIconPickerView(
                     selected: list.icon,
                     onPick: { symbol in
@@ -157,7 +163,7 @@ struct ListsDropdownView: View {
     }
 
     private var triggerBackground: Color {
-        if isTrashSelected && !isShowingMenu && !isTriggerHovering {
+        if isSpecialSelected && !isShowingMenu && !isTriggerHovering {
             return FloatDoTheme.controlFill
         }
         if isShowingMenu { return FloatDoTheme.controlFillStrong }
@@ -205,7 +211,7 @@ struct ListsDropdownView: View {
     @ViewBuilder
     private func menuContent(for current: TodoList) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            ForEach(allLists) { item in
+            ForEach(lists) { item in
                 DropdownListRow(
                     list: item,
                     isSelected: item.id == current.id,
@@ -218,6 +224,27 @@ struct ListsDropdownView: View {
                 )
             }
 
+            if !lists.isEmpty {
+                Divider()
+                    .padding(.vertical, 4)
+            }
+
+            ForEach(specialLists) { item in
+                DropdownListRow(
+                    list: item,
+                    isSelected: item.id == current.id,
+                    onTap: {
+                        isShowingMenu = false
+                        if item.id != current.id {
+                            onSelect(item.id)
+                        }
+                    }
+                )
+            }
+
+            Divider()
+                .padding(.vertical, 4)
+
             DropdownActionRow(
                 title: "New list",
                 systemImage: "plus",
@@ -226,9 +253,6 @@ struct ListsDropdownView: View {
                     DispatchQueue.main.async { onCreate() }
                 }
             )
-
-            Divider()
-                .padding(.vertical, 4)
 
             if current.id == trashList.id {
                 DropdownActionRow(
@@ -240,7 +264,7 @@ struct ListsDropdownView: View {
                         onEmptyTrash()
                     }
                 )
-            } else {
+            } else if !isSpecialList(current) {
                 DropdownActionRow(
                     title: "Rename",
                     systemImage: "pencil",
@@ -275,7 +299,7 @@ struct ListsDropdownView: View {
     // MARK: - Edit helpers
 
     private func beginEdit(_ list: TodoList) {
-        guard list.id != trashList.id else { return }
+        guard !isSpecialList(list) else { return }
         draftName = list.name
         isEditing = true
         DispatchQueue.main.async {
@@ -296,6 +320,10 @@ struct ListsDropdownView: View {
     private func cancelEdit() {
         isEditing = false
         isEditorFocused = false
+    }
+
+    private func isSpecialList(_ list: TodoList) -> Bool {
+        list.id == completedList.id || list.id == trashList.id
     }
 }
 

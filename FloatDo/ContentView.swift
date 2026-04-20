@@ -109,6 +109,8 @@ struct ContentView: View {
     @State private var listPendingDeletion: TodoList?
     @State private var isShowingEmptyTrashAlert = false
     @State private var isHoldingForDeletePrompt = false
+    @State private var expandedCompletedListIDs: Set<UUID> = []
+    @State private var hoveredCompletedToggleListID: UUID?
     @FocusState private var isInputFocused: Bool
 
     private static let reorderAnimation = Animation.spring(response: 0.35, dampingFraction: 0.78)
@@ -233,15 +235,17 @@ struct ContentView: View {
                     .padding(.bottom, 10)
             }
 
-            if store.lists.isEmpty && !store.isTrashSelected && !store.hasTrashedItems {
+            if shouldShowNoListsEmptyState {
                 noListsEmptyState
-            } else if sortedItems.isEmpty {
-                currentEmptyState
             } else {
-                taskList
+                if shouldShowTaskList {
+                    taskList
+                } else {
+                    currentEmptyState
+                }
             }
 
-            if store.selectedListID != nil && !store.isTrashSelected {
+            if store.selectedListID != nil && !store.isSpecialListSelected {
                 inputBar
             }
         }
@@ -251,7 +255,7 @@ struct ContentView: View {
 
     private var header: some View {
         HStack(alignment: .top, spacing: 6) {
-            if store.lists.isEmpty && !store.isTrashSelected && !store.hasTrashedItems {
+            if shouldShowNoListsEmptyState {
                 Text("No lists yet")
                     .font(.system(size: tweaks.secondaryTextSize))
                     .foregroundStyle(FloatDoTheme.textSecondary)
@@ -261,6 +265,7 @@ struct ContentView: View {
             } else {
                 ListsDropdownView(
                     lists: store.lists,
+                    completedList: TodoList.completedList,
                     trashList: TodoList.trashList,
                     selectedID: store.selectedListID,
                     autoFocusRenameID: pendingAutoFocusListID,
@@ -279,6 +284,10 @@ struct ContentView: View {
         .padding(.horizontal, tweaks.contentHorizontalPadding)
         .padding(.top, tweaks.contentTopPadding)
         .padding(.bottom, tweaks.contentBottomPadding)
+        .onChange(of: store.lists.map(\.id)) { _, ids in
+            let live = Set(ids)
+            expandedCompletedListIDs = Set(expandedCompletedListIDs.filter { live.contains($0) })
+        }
     }
 
     private func createList() {
@@ -357,10 +366,28 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private var completedEmptyState: some View {
+        VStack(spacing: 8) {
+            Text("Completed is clear.")
+                .font(.system(size: 26, weight: .regular, design: .serif).italic())
+                .tracking(-0.48)
+                .foregroundStyle(FloatDoTheme.textPrimary.opacity(0.95))
+
+            Text("Finished tasks from every list will collect here.")
+                .font(.system(size: tweaks.bodyTextSize))
+                .foregroundStyle(FloatDoTheme.textSecondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     @ViewBuilder
     private var currentEmptyState: some View {
         if store.isTrashSelected {
             trashEmptyState
+        } else if store.isCompletedSelected {
+            completedEmptyState
         } else {
             emptyState
         }
@@ -369,9 +396,35 @@ struct ContentView: View {
     private var taskList: some View {
         ScrollView {
             LazyVStack(spacing: tweaks.rowSpacing) {
-                ForEach(sortedItems) { item in
-                    taskRow(item)
+                if let listID = selectedRegularListID {
+                    if sortedItems.isEmpty && !currentCompletedItems.isEmpty {
+                        inlineEmptyState
+                    }
+
+                    ForEach(sortedItems) { item in
+                        taskRow(item)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+
+                    if !currentCompletedItems.isEmpty {
+                        completedToggleButton(for: listID, count: currentCompletedItems.count)
+
+                        if isCompletedExpanded(for: listID) {
+                            ForEach(currentCompletedItems) { item in
+                                taskRow(item, isReorderEnabled: false)
+                                    .transition(.opacity.combined(with: .move(edge: .top)))
+                            }
+                        }
+                    }
+                } else {
+                    ForEach(sortedItems) { item in
+                        taskRow(
+                            item,
+                            subtitle: store.isSpecialListSelected ? store.sourceListName(for: item) : nil,
+                            isReorderEnabled: false
+                        )
                         .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
                 }
             }
             .padding(.horizontal, tweaks.contentHorizontalPadding)
@@ -391,14 +444,19 @@ struct ContentView: View {
         .frame(maxHeight: .infinity)
     }
 
-    private func taskRow(_ item: TodoItem) -> some View {
-        TodoRowView(
+    private func taskRow(
+        _ item: TodoItem,
+        subtitle: String? = nil,
+        isReorderEnabled: Bool? = nil
+    ) -> some View {
+        let isTrashItem = store.isTrashSelected
+        return TodoRowView(
             item: item,
-            isTrashItem: store.isTrashSelected,
+            isTrashItem: isTrashItem,
             isDragging: draggingID == item.id,
             isDragActive: draggingID != nil,
             yOffset: offset(for: item.id),
-            subtitle: store.isTrashSelected ? store.originalListName(for: item) : nil,
+            subtitle: subtitle,
             onToggle: {
                 withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
                     store.toggle(item)
@@ -427,8 +485,16 @@ struct ContentView: View {
             onDragEnded: { translation in
                 commitDrag(for: item.id, translation: translation)
             },
-            isReorderEnabled: !store.isTrashSelected
+            isToggleEnabled: !isTrashItem,
+            isReorderEnabled: isReorderEnabled ?? !store.isSpecialListSelected
         )
+        .id(RowRenderIdentity(
+            itemID: item.id,
+            selectedListID: store.selectedListID,
+            isCompleted: item.isCompleted,
+            isTrashItem: isTrashItem,
+            subtitle: subtitle
+        ))
     }
 
     private var inputBar: some View {
@@ -526,6 +592,106 @@ struct ContentView: View {
 
     private var sortedItems: [TodoItem] {
         store.visibleItems
+    }
+
+    private var shouldShowNoListsEmptyState: Bool {
+        store.lists.isEmpty && !store.isSpecialListSelected && !store.hasCompletedItems && !store.hasTrashedItems
+    }
+
+    private var selectedRegularListID: UUID? {
+        guard let id = store.selectedListID, !store.isSpecialListSelected else { return nil }
+        return id
+    }
+
+    private var currentCompletedItems: [TodoItem] {
+        guard let listID = selectedRegularListID else { return [] }
+        return store.completedItems(in: listID)
+    }
+
+    private var shouldShowTaskList: Bool {
+        if store.isSpecialListSelected {
+            return !sortedItems.isEmpty
+        }
+        return !sortedItems.isEmpty || !currentCompletedItems.isEmpty
+    }
+
+    private var inlineEmptyState: some View {
+        VStack(spacing: 8) {
+            Text("Start anywhere.")
+                .font(.system(size: 24, weight: .regular, design: .serif).italic())
+                .tracking(-0.48)
+                .foregroundStyle(FloatDoTheme.textPrimary.opacity(0.95))
+
+            Text(isInputFocused ? "Press ⏎ to add" : "Type a task below")
+                .font(.system(size: tweaks.bodyTextSize))
+                .foregroundStyle(FloatDoTheme.textSecondary)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 18)
+        .frame(maxWidth: .infinity)
+        .opacity(isInputFocused ? 0.42 : 0.7)
+        .animation(.easeInOut(duration: 0.2), value: isInputFocused)
+    }
+
+    private func completedToggleButton(for listID: UUID, count: Int) -> some View {
+        let expanded = isCompletedExpanded(for: listID)
+        let isHovering = hoveredCompletedToggleListID == listID
+
+        return Button {
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                toggleCompletedSection(for: listID)
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(completedButtonTitle(count: count, expanded: expanded))
+                    .font(.system(size: tweaks.secondaryTextSize, weight: .medium))
+                    .foregroundStyle(FloatDoTheme.textSecondary)
+
+                Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: max(tweaks.secondaryTextSize - 3, 8), weight: .semibold))
+                    .foregroundStyle(FloatDoTheme.textSecondary)
+            }
+            .padding(.horizontal, tweaks.rowHorizontalPadding)
+            .padding(.vertical, max(6, tweaks.rowVerticalPadding))
+            .frame(alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous)
+                    .fill((expanded || isHovering) ? FloatDoTheme.controlFill : Color.clear)
+            )
+        }
+        .buttonStyle(.plain)
+        .background(WindowDragBlocker())
+        .pointerCursor(.pointingHand)
+        .onHover { hovering in
+            hoveredCompletedToggleListID = hovering ? listID : nil
+        }
+        .padding(.top, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func completedButtonTitle(count: Int, expanded: Bool) -> String {
+        let noun = count == 1 ? "completed item" : "completed items"
+        return expanded ? "Hide \(count) \(noun)" : "Show \(count) \(noun)"
+    }
+
+    private func isCompletedExpanded(for listID: UUID) -> Bool {
+        expandedCompletedListIDs.contains(listID)
+    }
+
+    private func toggleCompletedSection(for listID: UUID) {
+        if expandedCompletedListIDs.contains(listID) {
+            expandedCompletedListIDs.remove(listID)
+        } else {
+            expandedCompletedListIDs.insert(listID)
+        }
+    }
+
+    private struct RowRenderIdentity: Hashable {
+        let itemID: UUID
+        let selectedListID: UUID?
+        let isCompleted: Bool
+        let isTrashItem: Bool
+        let subtitle: String?
     }
 
     // MARK: - Drag
