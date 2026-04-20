@@ -120,6 +120,10 @@ enum FloatListTheme {
         light: Color.white.opacity(0.85),
         dark: Color.white.opacity(0.92)
     )
+    static let dragPreviewFill = Color.dynamic(
+        light: Color(red: 0.985, green: 0.985, blue: 0.99),
+        dark: Color(red: 0.16, green: 0.17, blue: 0.19)
+    )
 
     // Status
     static let success = Color(red: 0.24, green: 0.74, blue: 0.38)

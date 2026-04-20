@@ -21,7 +21,7 @@ final class LayoutTweaks: ObservableObject, @unchecked Sendable {
         static let contentHorizontalPadding: CGFloat = 4
         static let contentTopPadding: CGFloat = 4
         static let contentBottomPadding: CGFloat = 0
-        static let rowSpacing: CGFloat = 4
+        static let rowSpacing: CGFloat = 0
 
         static let inputCornerRadius: CGFloat = 12
         static let inputLeadingPadding: CGFloat = 12

@@ -234,6 +234,13 @@ struct RowHeightPreferenceKey: PreferenceKey {
     }
 }
 
+struct RowFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [UUID: CGRect] = [:]
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
 /// Reminders-style circular checkbox. Uses a standard `Toggle` under the hood;
 /// this is the `ToggleStyle` that renders it.
 struct TodoCheckboxToggleStyle: ToggleStyle {
@@ -241,31 +248,94 @@ struct TodoCheckboxToggleStyle: ToggleStyle {
         Button {
             configuration.isOn.toggle()
         } label: {
-            ZStack {
-                if configuration.isOn {
-                    Circle()
-                        .fill(FloatListTheme.success)
-                        .frame(width: LayoutTweaks.shared.checkboxSize, height: LayoutTweaks.shared.checkboxSize)
-                    Image(systemName: "checkmark")
-                        .font(.system(size: LayoutTweaks.shared.checkmarkSize, weight: .bold))
-                        .foregroundStyle(Color.white)
-                } else {
-                    Circle()
-                        .strokeBorder(
-                            Color.dynamic(
-                                light: Color.black.opacity(0.35),
-                                dark: Color.white.opacity(0.45)
-                            ),
-                            lineWidth: 1.5
-                        )
-                        .frame(width: LayoutTweaks.shared.checkboxSize, height: LayoutTweaks.shared.checkboxSize)
-                }
-            }
-            .frame(width: 18, height: 18)
-            .contentShape(Rectangle())
+            TodoCheckboxGlyph(isChecked: configuration.isOn)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .pointerCursor(.pointingHand)
+    }
+}
+
+private struct TodoCheckboxGlyph: View {
+    let isChecked: Bool
+
+    private var strokeColor: Color {
+        Color.dynamic(
+            light: Color.black.opacity(0.35),
+            dark: Color.white.opacity(0.45)
+        )
+    }
+
+    var body: some View {
+        ZStack {
+            if isChecked {
+                Circle()
+                    .fill(FloatListTheme.success)
+                    .frame(width: LayoutTweaks.shared.checkboxSize, height: LayoutTweaks.shared.checkboxSize)
+                Image(systemName: "checkmark")
+                    .font(.system(size: LayoutTweaks.shared.checkmarkSize, weight: .bold))
+                    .foregroundStyle(Color.white)
+            } else {
+                Circle()
+                    .strokeBorder(strokeColor, lineWidth: 1.5)
+                    .frame(width: LayoutTweaks.shared.checkboxSize, height: LayoutTweaks.shared.checkboxSize)
+            }
+        }
+        .frame(width: 18, height: 18)
+    }
+}
+
+private struct TodoRowSubtitleChip: View {
+    let subtitle: String
+
+    @ObservedObject private var tweaks = LayoutTweaks.shared
+
+    var body: some View {
+        Text(subtitle)
+            .font(.system(size: tweaks.secondaryTextSize - 1, weight: .medium))
+            .foregroundStyle(FloatListTheme.textSecondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(
+                Capsule()
+                    .fill(FloatListTheme.controlFill)
+            )
+    }
+}
+
+private struct TodoRowContent<Leading: View, TitleContent: View>: View {
+    let subtitle: String?
+    let leading: Leading
+    let titleContent: TitleContent
+
+    @ObservedObject private var tweaks = LayoutTweaks.shared
+
+    init(
+        subtitle: String?,
+        @ViewBuilder leading: () -> Leading,
+        @ViewBuilder titleContent: () -> TitleContent
+    ) {
+        self.subtitle = subtitle
+        self.leading = leading()
+        self.titleContent = titleContent()
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: tweaks.rowInnerSpacing) {
+            leading
+
+            VStack(alignment: .leading, spacing: subtitle == nil ? 0 : 4) {
+                titleContent
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                if let subtitle, !subtitle.isEmpty {
+                    TodoRowSubtitleChip(subtitle: subtitle)
+                }
+            }
+            .frame(minHeight: 18, alignment: .topLeading)
+        }
+        .padding(.horizontal, tweaks.rowHorizontalPadding)
+        .padding(.vertical, tweaks.rowVerticalPadding)
     }
 }
 
@@ -274,7 +344,6 @@ struct TodoRowView: View {
     let isTrashItem: Bool
     let isDragging: Bool
     let isDragActive: Bool
-    let yOffset: CGFloat
     var subtitle: String? = nil
     var completionOverride: Bool? = nil
     var isExiting = false
@@ -296,6 +365,7 @@ struct TodoRowView: View {
     @State private var hasCommittedHaptic = false
     @State private var rowWidth: CGFloat = 0
     @State private var isEditing = false
+    @State private var hasActivatedReorderGesture = false
     @ObservedObject private var tweaks = LayoutTweaks.shared
 
     private enum SwipeRestSide { case leading, trailing }
@@ -304,64 +374,63 @@ struct TodoRowView: View {
     private var revealThreshold: CGFloat { 28 }
     private var revealWidth: CGFloat { 72 }
     private var displayedIsCompleted: Bool { completionOverride ?? item.isCompleted }
+    private let reorderActivationDistance: CGFloat = 14
+    private let reorderVerticalIntentRatio: CGFloat = 1.35
+    private let reorderVerticalIntentBias: CGFloat = 12
+
+    private var isReorderLifted: Bool {
+        isDragging || hasActivatedReorderGesture
+    }
+
+    private var reorderZIndex: Double {
+        if isDragging { return 100 }
+        if hasActivatedReorderGesture { return 10 }
+        return 0
+    }
+
+    private var reorderShadowColor: Color {
+        FloatListTheme.panelShadow(opacity: isDragging ? 0.18 : (hasActivatedReorderGesture ? 0.1 : 0))
+    }
+
+    private var reorderShadowRadius: CGFloat {
+        isDragging ? 16 : (hasActivatedReorderGesture ? 9 : 0)
+    }
+
+    private var reorderShadowYOffset: CGFloat {
+        isDragging ? 10 : (hasActivatedReorderGesture ? 4 : 0)
+    }
+
+    private var reorderCardFill: Color {
+        if isDragging {
+            return FloatListTheme.prominentChipFill.opacity(0.94)
+        }
+        if hasActivatedReorderGesture {
+            return FloatListTheme.controlFillStrong.opacity(0.9)
+        }
+        return .clear
+    }
+
+    private var reorderCardStroke: Color {
+        if isDragging {
+            return FloatListTheme.hairline.opacity(0.42)
+        }
+        if hasActivatedReorderGesture {
+            return FloatListTheme.hairline.opacity(0.22)
+        }
+        return .clear
+    }
 
     private var titleColor: Color {
         displayedIsCompleted ? FloatListTheme.textSecondary : FloatListTheme.textPrimary
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: tweaks.rowInnerSpacing) {
+        TodoRowContent(subtitle: subtitle) {
             checkbox
-
-            VStack(alignment: .leading, spacing: subtitle == nil ? 0 : 4) {
-                ZStack(alignment: .topLeading) {
-                    if isEditing {
-                        AutoGrowingInputField(
-                            text: $draftTitle,
-                            placeholder: "Task",
-                            font: NSFont.systemFont(ofSize: tweaks.bodyTextSize),
-                            textColor: NSColor(FloatListTheme.textPrimary),
-                            placeholderColor: .placeholderTextColor,
-                            maxLines: 5,
-                            onSubmit: commitAndExit,
-                            onCancel: cancelEdit,
-                            onFocusChange: { focused in
-                                if !focused && isEditing { commitAndExit() }
-                            },
-                            focusOnAppear: true
-                        )
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                    } else {
-                        Text(item.title)
-                            .font(.system(size: tweaks.bodyTextSize))
-                            .strikethrough(displayedIsCompleted)
-                            .foregroundStyle(titleColor)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .topLeading)
-                            .contentShape(Rectangle())
-                            .onTapGesture(count: 2) { isEditing = true }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-
-                if let subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(.system(size: tweaks.secondaryTextSize - 1, weight: .medium))
-                        .foregroundStyle(FloatListTheme.textSecondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(
-                            Capsule()
-                                .fill(FloatListTheme.controlFill)
-                        )
-                }
-            }
-            .frame(minHeight: 18, alignment: .topLeading)
-            .pointerCursor(.iBeam, active: isEditing && !isDragActive)
+        } titleContent: {
+            titleSection
         }
-        .padding(.horizontal, tweaks.rowHorizontalPadding)
-        .padding(.vertical, tweaks.rowVerticalPadding)
+        .pointerCursor(.iBeam, active: isEditing && !isDragActive)
         .background(WindowDragBlocker())
         .background(
             ClickOutsideDetector(isActive: isEditing || swipeRest != nil) {
@@ -373,8 +442,10 @@ struct TodoRowView: View {
                 }
             }
         )
+        .background(reorderCardBackground)
         .background(rowBackground)
         .clipShape(RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous))
+        .compositingGroup()
         .offset(x: swipeOffset)
         .background(swipeRevealLayer)
         .background(
@@ -390,9 +461,7 @@ struct TodoRowView: View {
                     withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
                         swipeOffset = 0
                     }
-                    swipeBase = 0
-                    swipeRest = nil
-                    hasCommittedHaptic = false
+                    resetSwipeState()
                 }
             )
         )
@@ -403,6 +472,10 @@ struct TodoRowView: View {
                         key: RowHeightPreferenceKey.self,
                         value: [item.id: geo.size.height]
                     )
+                    .preference(
+                        key: RowFramePreferenceKey.self,
+                        value: [item.id: geo.frame(in: .named("taskListContent"))]
+                    )
                     .onAppear { rowWidth = geo.size.width }
                     .onChange(of: geo.size.width) { _, new in rowWidth = new }
             }
@@ -410,13 +483,14 @@ struct TodoRowView: View {
         .contentShape(Rectangle())
         .allowsHitTesting(!isExiting)
         .opacity(isExiting ? 0.78 : 1)
-        .brightness(isDragging ? 0.04 : (isExiting ? -0.01 : 0))
-        .offset(y: yOffset)
-        .scaleEffect(isDragging ? 1.03 : (isExiting ? 0.992 : 1.0), anchor: .topLeading)
-        .shadow(color: .black.opacity(isDragging ? 0.45 : 0), radius: 16, y: 6)
-        .zIndex(isDragging ? 1 : 0)
+        .brightness(isReorderLifted ? 0.02 : (isExiting ? -0.01 : 0))
+        .offset(y: isDragging ? -4 : (hasActivatedReorderGesture ? -2 : 0))
+        .scaleEffect(isDragging ? 1.014 : (hasActivatedReorderGesture ? 1.008 : (isExiting ? 0.992 : 1.0)), anchor: .topLeading)
+        .shadow(color: reorderShadowColor, radius: reorderShadowRadius, y: reorderShadowYOffset)
+        .zIndex(reorderZIndex)
         .pointerCursor(hoverCursor, active: !isDragActive && isReorderEnabled)
         .animation(.easeOut(duration: 0.18), value: isExiting)
+        .animation(.spring(response: 0.22, dampingFraction: 0.82), value: hasActivatedReorderGesture)
         .onHover { hovering in
             guard !isDragActive else { return }
             withAnimation(.easeInOut(duration: 0.15)) {
@@ -474,23 +548,58 @@ struct TodoRowView: View {
             }
         }
         .gesture(
-            DragGesture(minimumDistance: 8, coordinateSpace: .named("list"))
+            DragGesture(minimumDistance: 4, coordinateSpace: .named("list"))
                 .onChanged { value in
+                    guard isReorderEnabled, !isEditing else { return }
+                    guard shouldActivateReorder(for: value.translation) || hasActivatedReorderGesture else { return }
+
+                    if !hasActivatedReorderGesture {
+                        beginReorderGesture()
+                    }
                     if !didPushCursor {
                         NSCursor.closedHand.push()
                         didPushCursor = true
                     }
-                    onDragChanged(value.translation.height)
+                    onDragChanged(effectiveReorderTranslation(for: value.translation))
                 }
                 .onEnded { value in
-                    if didPushCursor {
-                        NSCursor.pop()
-                        didPushCursor = false
-                    }
-                    onDragEnded(value.translation.height)
+                    releaseDragCursor()
+                    onDragEnded(hasActivatedReorderGesture ? effectiveReorderTranslation(for: value.translation) : 0)
+                    hasActivatedReorderGesture = false
                 },
             including: (isEditing || !isReorderEnabled) ? .subviews : .all
         )
+    }
+
+    @ViewBuilder
+    private var titleSection: some View {
+        ZStack(alignment: .topLeading) {
+            if isEditing {
+                AutoGrowingInputField(
+                    text: $draftTitle,
+                    placeholder: "Task",
+                    font: NSFont.systemFont(ofSize: tweaks.bodyTextSize),
+                    textColor: NSColor(FloatListTheme.textPrimary),
+                    placeholderColor: .placeholderTextColor,
+                    maxLines: 5,
+                    onSubmit: commitAndExit,
+                    onCancel: cancelEdit,
+                    onFocusChange: { focused in
+                        if !focused && isEditing { commitAndExit() }
+                    },
+                    focusOnAppear: true
+                )
+                .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(item.title)
+                    .font(.system(size: tweaks.bodyTextSize))
+                    .strikethrough(displayedIsCompleted)
+                    .foregroundStyle(titleColor)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) { isEditing = true }
+            }
+        }
     }
 
     private var checkbox: some View {
@@ -501,7 +610,7 @@ struct TodoRowView: View {
             EmptyView()
         }
         .toggleStyle(TodoCheckboxToggleStyle())
-        .allowsHitTesting(isToggleEnabled)
+        .allowsHitTesting(isToggleEnabled && !isDragActive)
     }
 
     private var swipeRevealLayer: some View {
@@ -662,9 +771,7 @@ struct TodoRowView: View {
         withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
             swipeOffset = 0
         }
-        swipeRest = nil
-        swipeBase = 0
-        hasCommittedHaptic = false
+        resetSwipeState()
     }
 
     private func commitEdit() {
@@ -689,11 +796,44 @@ struct TodoRowView: View {
     }
 
     private func resetTransientRowState() {
-        swipeOffset = 0
+        releaseDragCursor()
+        hasActivatedReorderGesture = false
+        resetSwipeState()
+        isHovering = false
+    }
+
+    private func beginReorderGesture() {
+        resetSwipeState()
+        isHovering = false
+        hasActivatedReorderGesture = true
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
+    }
+
+    private func resetSwipeState(offset: CGFloat = 0) {
+        swipeOffset = offset
         swipeBase = 0
         swipeRest = nil
         hasCommittedHaptic = false
-        isHovering = false
+    }
+
+    private func releaseDragCursor() {
+        if didPushCursor {
+            NSCursor.pop()
+            didPushCursor = false
+        }
+    }
+
+    private func shouldActivateReorder(for translation: CGSize) -> Bool {
+        let vertical = abs(translation.height)
+        let horizontal = abs(translation.width)
+        guard vertical > reorderActivationDistance else { return false }
+        return vertical > (horizontal * reorderVerticalIntentRatio) || vertical > horizontal + reorderVerticalIntentBias
+    }
+
+    private func effectiveReorderTranslation(for translation: CGSize) -> CGFloat {
+        let raw = translation.height
+        let magnitude = max(0, abs(raw) - reorderActivationDistance)
+        return raw.sign == .minus ? -magnitude : magnitude
     }
 
     private var hoverCursor: NSCursor? {
@@ -702,7 +842,9 @@ struct TodoRowView: View {
 
     private var rowBackground: some View {
         let fill: Color
-        if isDragging || isEditing {
+        if isDragging {
+            fill = .clear
+        } else if isEditing {
             fill = FloatListTheme.controlFillStrong
         } else if isExiting {
             fill = FloatListTheme.controlFill.opacity(0.55)
@@ -711,6 +853,46 @@ struct TodoRowView: View {
         } else {
             fill = .clear
         }
-        return Rectangle().fill(fill)
+        return RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous)
+            .fill(fill)
+    }
+
+    private var reorderCardBackground: some View {
+        RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous)
+            .fill(reorderCardFill)
+            .overlay(
+                RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous)
+                    .stroke(reorderCardStroke, lineWidth: isReorderLifted ? 1 : 0)
+            )
+    }
+}
+
+struct TodoRowDragPreview: View {
+    let item: TodoItem
+    var subtitle: String? = nil
+
+    @ObservedObject private var tweaks = LayoutTweaks.shared
+
+    var body: some View {
+        TodoRowContent(subtitle: subtitle) {
+            TodoCheckboxGlyph(isChecked: item.isCompleted)
+        } titleContent: {
+            Text(item.title)
+                .font(.system(size: LayoutTweaks.shared.bodyTextSize))
+                .strikethrough(item.isCompleted)
+                .foregroundStyle(item.isCompleted ? FloatListTheme.textSecondary : FloatListTheme.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous)
+                .fill(FloatListTheme.dragPreviewFill)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous)
+                .stroke(FloatListTheme.hairline.opacity(0.38), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous))
+        .compositingGroup()
+        .shadow(color: FloatListTheme.panelShadow(opacity: 0.2), radius: 18, y: 10)
     }
 }
