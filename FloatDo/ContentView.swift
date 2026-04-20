@@ -90,11 +90,8 @@ struct ContentView: View {
     @State private var lastTargetIndex: Int?
     @State private var escapeMonitor: Any?
     @State private var pendingAutoFocusListID: UUID?
-    @State private var draggingListID: UUID?
-    @State private var listDragOffset: CGFloat = 0
-    @State private var listWidths: [UUID: CGFloat] = [:]
-    @State private var lastListTargetIndex: Int?
-    @State private var listEscapeMonitor: Any?
+    @State private var listPendingDeletion: TodoList?
+    @State private var isHoldingForDeletePrompt = false
     @FocusState private var isInputFocused: Bool
 
     private static let reorderAnimation = Animation.spring(response: 0.35, dampingFraction: 0.78)
@@ -127,12 +124,64 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.clear)
+        .environmentObject(panelManager)
         .animation(PanelMotion.stateAnimation, value: panelManager.isCollapsed)
         .animation(PanelMotion.stateAnimation, value: panelManager.currentAnchor)
         .animation(PanelMotion.stateAnimation, value: panelManager.isDragging)
         .onDisappear {
             removeEscapeMonitor()
-            removeListEscapeMonitor()
+            releaseDeletePromptHoldIfNeeded()
+        }
+        .alert(
+            deleteAlertTitle,
+            isPresented: Binding(
+                get: { listPendingDeletion != nil },
+                set: { presented in
+                    if !presented { listPendingDeletion = nil }
+                }
+            ),
+            presenting: listPendingDeletion
+        ) { list in
+            Button("Delete", role: .destructive) {
+                performDeleteList(list)
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: { list in
+            Text(deleteAlertMessage(for: list))
+        }
+        .onChange(of: listPendingDeletion == nil) { _, isNil in
+            setDeletePromptHold(!isNil)
+        }
+    }
+
+    private var deleteAlertTitle: String {
+        guard let list = listPendingDeletion else { return "Delete list?" }
+        return "Delete \u{201C}\(list.name)\u{201D}?"
+    }
+
+    private func deleteAlertMessage(for list: TodoList) -> String {
+        let count = store.items(in: list.id).count
+        if count == 0 {
+            return "This list will be permanently deleted."
+        }
+        let taskWord = count == 1 ? "task" : "tasks"
+        return "This list and its \(count) \(taskWord) will be permanently deleted."
+    }
+
+    private func setDeletePromptHold(_ hold: Bool) {
+        guard hold != isHoldingForDeletePrompt else { return }
+        isHoldingForDeletePrompt = hold
+        if hold {
+            panelManager.pushHoverHold()
+        } else {
+            panelManager.popHoverHold()
+        }
+    }
+
+    private func releaseDeletePromptHoldIfNeeded() {
+        if isHoldingForDeletePrompt {
+            isHoldingForDeletePrompt = false
+            panelManager.popHoverHold()
         }
     }
 
@@ -178,59 +227,21 @@ struct ContentView: View {
                     .foregroundStyle(FloatDoTheme.textSecondary)
                     .padding(.horizontal, 4)
                 Spacer(minLength: 0)
+                AddListButton(action: createList)
             } else {
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 4) {
-                            ForEach(Array(store.lists.enumerated()), id: \.element.id) { index, list in
-                                ListPillView(
-                                    list: list,
-                                    isSelected: store.selectedListID == list.id,
-                                    autoFocusOnAppear: pendingAutoFocusListID == list.id,
-                                    isDragging: draggingListID == list.id,
-                                    isDragActive: draggingListID != nil,
-                                    xOffset: visualListOffset(for: index, in: store.lists),
-                                    onSelect: { selectList(list.id) },
-                                    onRename: { store.renameList(list, to: $0) },
-                                    onDelete: { deleteList(list) },
-                                    onSetIcon: { store.setListIcon(list, to: $0) },
-                                    onDragChanged: { handleListDragChanged(for: list.id, translation: $0) },
-                                    onDragEnded: { commitListDrag(for: list.id, translation: $0) },
-                                    onAutoFocusConsumed: { pendingAutoFocusListID = nil }
-                                )
-                                .id(list.id)
-                                .transition(
-                                    .asymmetric(
-                                        insertion: .opacity.combined(with: .scale(scale: 0.7, anchor: .center)),
-                                        removal: .opacity.combined(with: .scale(scale: 0.6, anchor: .center))
-                                    )
-                                )
-                            }
-                        }
-                        .padding(.vertical, 2)
-                        .coordinateSpace(name: "lists")
-                        .onPreferenceChange(ListWidthPreferenceKey.self) { widths in
-                            listWidths.merge(widths) { _, new in new }
-                        }
-                        .onChange(of: store.lists.map(\.id)) { _, ids in
-                            let live = Set(ids)
-                            listWidths = listWidths.filter { live.contains($0.key) }
-                            if let pending = pendingAutoFocusListID, !live.contains(pending) {
-                                pendingAutoFocusListID = nil
-                            }
-                        }
-                        .animation(.spring(response: 0.42, dampingFraction: 0.82), value: store.lists.map(\.id))
-                        .animation(.spring(response: 0.36, dampingFraction: 0.82), value: store.selectedListID)
-                    }
-                    .onChange(of: store.selectedListID) { _, id in
-                        guard draggingListID == nil else { return }
-                        scroll(toListID: id, using: proxy)
-                    }
-                    .onChange(of: pendingAutoFocusListID) { _, id in scroll(toListID: id, using: proxy) }
-                }
+                ListsDropdownView(
+                    lists: store.lists,
+                    selectedID: store.selectedListID,
+                    autoFocusRenameID: pendingAutoFocusListID,
+                    onSelect: { selectList($0) },
+                    onCreate: createList,
+                    onRename: { list, name in store.renameList(list, to: name) },
+                    onDelete: { deleteList($0) },
+                    onSetIcon: { list, symbol in store.setListIcon(list, to: symbol) },
+                    onAutoFocusConsumed: { pendingAutoFocusListID = nil }
+                )
+                Spacer(minLength: 0)
             }
-
-            AddListButton(action: createList)
             SettingsButton()
         }
         .padding(.horizontal, tweaks.contentHorizontalPadding)
@@ -246,6 +257,11 @@ struct ContentView: View {
     }
 
     private func deleteList(_ list: TodoList) {
+        listPendingDeletion = list
+    }
+
+    private func performDeleteList(_ list: TodoList) {
+        listPendingDeletion = nil
         withAnimation(.spring(response: 0.38, dampingFraction: 0.84)) {
             store.deleteList(list)
         }
@@ -254,13 +270,6 @@ struct ContentView: View {
     private func selectList(_ id: UUID) {
         withAnimation(.spring(response: 0.36, dampingFraction: 0.82)) {
             store.selectList(id)
-        }
-    }
-
-    private func scroll(toListID id: UUID?, using proxy: ScrollViewProxy) {
-        guard let id else { return }
-        withAnimation(.easeOut(duration: 0.2)) {
-            proxy.scrollTo(id, anchor: .center)
         }
     }
 
@@ -546,128 +555,6 @@ struct ContentView: View {
         newOrder.insert(draggingID, at: target)
         guard let newIdx = newOrder.firstIndex(of: id) else { return 0 }
         return yPosition(for: newIdx, in: newOrder) - yPosition(for: myIdx, in: order)
-    }
-
-    private func targetListIndex(from original: Int, offset: CGFloat, in order: [TodoList]) -> Int {
-        guard !order.isEmpty else { return 0 }
-        var idx = original
-        var accumulated: CGFloat = 0
-        if offset > 0 {
-            for i in (original + 1)..<order.count {
-                let w = listWidths[order[i].id] ?? ListPillMetrics.estimatedWidth
-                accumulated += w
-                if offset > accumulated - w / 2 {
-                    idx = i
-                } else {
-                    break
-                }
-            }
-        } else if offset < 0 {
-            for i in stride(from: original - 1, through: 0, by: -1) {
-                let w = listWidths[order[i].id] ?? ListPillMetrics.estimatedWidth
-                accumulated += w
-                if -offset > accumulated - w / 2 {
-                    idx = i
-                } else {
-                    break
-                }
-            }
-        }
-        return idx
-    }
-
-    private func xPosition(for index: Int, in order: [UUID]) -> CGFloat {
-        var x: CGFloat = 0
-        for i in 0..<index {
-            x += listWidths[order[i]] ?? ListPillMetrics.estimatedWidth
-        }
-        return x
-    }
-
-    private func visualListOffset(for index: Int, in visible: [TodoList]) -> CGFloat {
-        guard let dragID = draggingListID,
-              let originalIdx = visible.firstIndex(where: { $0.id == dragID }) else {
-            return 0
-        }
-        if index == originalIdx {
-            return listDragOffset
-        }
-        let target = targetListIndex(from: originalIdx, offset: listDragOffset, in: visible)
-        if target == originalIdx { return 0 }
-
-        let currentOrder = visible.map(\.id)
-        var newOrder = currentOrder
-        let draggedID = newOrder.remove(at: originalIdx)
-        newOrder.insert(draggedID, at: target)
-
-        let rowID = currentOrder[index]
-        guard let newIdx = newOrder.firstIndex(of: rowID) else { return 0 }
-
-        return xPosition(for: newIdx, in: newOrder) - xPosition(for: index, in: currentOrder)
-    }
-
-    private func handleListDragChanged(for id: UUID, translation: CGFloat) {
-        let visible = store.lists
-        if draggingListID == nil {
-            draggingListID = id
-            lastListTargetIndex = visible.firstIndex(where: { $0.id == id })
-            fireHaptic(.levelChange)
-            installListEscapeMonitor()
-        }
-        listDragOffset = translation
-        guard let original = visible.firstIndex(where: { $0.id == id }) else { return }
-        let target = targetListIndex(from: original, offset: translation, in: visible)
-        if target != lastListTargetIndex {
-            lastListTargetIndex = target
-            fireHaptic(.alignment)
-        }
-    }
-
-    private func commitListDrag(for id: UUID, translation: CGFloat) {
-        guard draggingListID == id else {
-            removeListEscapeMonitor()
-            lastListTargetIndex = nil
-            return
-        }
-        let visible = store.lists
-        let original = visible.firstIndex(where: { $0.id == id }) ?? 0
-        let target = targetListIndex(from: original, offset: translation, in: visible)
-        withAnimation(Self.reorderAnimation) {
-            if target != original {
-                store.moveList(from: original, to: target)
-            }
-            listDragOffset = 0
-            draggingListID = nil
-        }
-        lastListTargetIndex = nil
-        removeListEscapeMonitor()
-    }
-
-    private func cancelListDrag() {
-        withAnimation(Self.reorderAnimation) {
-            listDragOffset = 0
-            draggingListID = nil
-        }
-        lastListTargetIndex = nil
-        removeListEscapeMonitor()
-    }
-
-    private func installListEscapeMonitor() {
-        if listEscapeMonitor != nil { return }
-        listEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
-            if event.keyCode == escapeKeyCode {
-                cancelListDrag()
-                return nil
-            }
-            return event
-        }
-    }
-
-    private func removeListEscapeMonitor() {
-        if let monitor = listEscapeMonitor {
-            NSEvent.removeMonitor(monitor)
-            listEscapeMonitor = nil
-        }
     }
 
     private func fireHaptic(_ pattern: NSHapticFeedbackManager.FeedbackPattern) {

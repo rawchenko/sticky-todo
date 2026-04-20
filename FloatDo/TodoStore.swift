@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit
 
 struct TodoStoreRecoveryNotice: Identifiable, Equatable {
     let id = UUID()
@@ -148,9 +149,7 @@ class TodoStore: ObservableObject {
     func addList(name: String, icon: String = TodoList.defaultIcon) -> TodoList {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let finalName = trimmed.isEmpty ? TodoList.defaultName : trimmed
-        let trimmedIcon = icon.trimmingCharacters(in: .whitespacesAndNewlines)
-        let finalIcon = trimmedIcon.isEmpty ? TodoList.defaultIcon : trimmedIcon
-        let list = TodoList(name: finalName, icon: finalIcon)
+        let list = TodoList(name: finalName, icon: TodoList.sanitize(icon))
         lists.append(list)
         selectedListID = list.id
         save()
@@ -168,7 +167,9 @@ class TodoStore: ObservableObject {
 
     func setListIcon(_ list: TodoList, to icon: String) {
         let trimmed = icon.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty,
+              NSImage(systemSymbolName: trimmed, accessibilityDescription: nil) != nil
+        else { return }
         guard let idx = lists.firstIndex(where: { $0.id == list.id }) else { return }
         guard lists[idx].icon != trimmed else { return }
         lists[idx].icon = trimmed

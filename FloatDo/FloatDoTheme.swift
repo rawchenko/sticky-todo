@@ -15,16 +15,13 @@ enum RowMetrics {
     static let estimatedHeight: CGFloat = 40
 }
 
-enum ListPillMetrics {
-    /// Fallback pill width used during drag-reorder hit-testing before
-    /// `ListWidthPreferenceKey` reports a measured width for a given pill.
-    static let estimatedWidth: CGFloat = 44
-}
-
 enum PanelMotion {
     static let stateAnimation = Animation.spring(response: 0.44, dampingFraction: 0.88, blendDuration: 0.18)
     static let frameAnimationDuration: TimeInterval = 0.42
-    static let hoverExitDelay: TimeInterval = 0.12
+    /// Grace period between the pointer leaving the expanded panel and the
+    /// collapse firing. Forgives brief pointer slips — if the user returns
+    /// within this window the panel stays open.
+    static let hoverExitDelay: TimeInterval = 0.5
     static let transitionDistance: CGFloat = 12
 }
 

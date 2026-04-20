@@ -275,19 +275,28 @@ final class TodoStoreTests: XCTestCase {
         XCTAssertEqual(store.lists.map(\.name), originalOrder)
     }
 
-    func testSetListIconRejectsEmpty() throws {
+    func testSetListIconRejectsInvalidValues() throws {
         let fileURL = try makeStoreFileURL()
         let store = TodoStore(fileURL: fileURL)
-        let list = store.addList(name: "Work", icon: "🚀")
+        let list = store.addList(name: "Work", icon: "star")
 
         store.setListIcon(list, to: "")
-        XCTAssertEqual(store.lists.first?.icon, "🚀")
+        XCTAssertEqual(store.lists.first?.icon, "star")
 
         store.setListIcon(list, to: "   \n\t  ")
-        XCTAssertEqual(store.lists.first?.icon, "🚀")
+        XCTAssertEqual(store.lists.first?.icon, "star")
 
+        // Non-SF-Symbol values (e.g. legacy emoji) are rejected.
         store.setListIcon(list, to: "🎯")
-        XCTAssertEqual(store.lists.first?.icon, "🎯")
+        XCTAssertEqual(store.lists.first?.icon, "star")
+
+        store.setListIcon(list, to: "target")
+        XCTAssertEqual(store.lists.first?.icon, "target")
+    }
+
+    func testTodoListSanitizesLegacyEmojiIconToDefault() throws {
+        let list = TodoList(name: "Old", icon: "📝")
+        XCTAssertEqual(list.icon, TodoList.defaultIcon)
     }
 
     // MARK: - Migration

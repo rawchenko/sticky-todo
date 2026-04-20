@@ -139,6 +139,12 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     /// the tracking area immediately collapses it because the pointer isn't
     /// over the newly-enlarged frame.
     private var isKeyboardPinned = false
+    /// Number of transient UI affordances (popovers, inline editors) that want
+    /// to keep the panel expanded even while the pointer leaves the panel
+    /// frame — popovers extend outside that frame, so their own hover would
+    /// otherwise trip the collapse timer.
+    private var hoverHoldCount = 0
+    private var isHoverHeld: Bool { hoverHoldCount > 0 }
 
     func setup<Content: View>(contentView: Content) {
         let panel = KeyablePanel(
@@ -563,14 +569,14 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
             return
         }
 
-        if isKeyboardPinned {
+        if isKeyboardPinned || isHoverHeld {
             return
         }
 
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.syncHoverStateWithPointerLocation()
-            if !self.isPointerInsidePanel && !self.isDragging && !self.isKeyboardPinned {
+            if !self.isPointerInsidePanel && !self.isDragging && !self.isKeyboardPinned && !self.isHoverHeld {
                 self.collapse()
             }
         }
@@ -589,9 +595,28 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
         if isPointerInside {
             isKeyboardPinned = false
             expand()
-        } else if !isKeyboardPinned {
+        } else if !isKeyboardPinned && !isHoverHeld {
             collapse()
         }
+    }
+
+    // MARK: - Hover hold
+
+    /// Increment the hover-hold counter. While the count is positive, the
+    /// panel will not auto-collapse on pointer exit. Callers must pair each
+    /// push with a later `popHoverHold()`.
+    func pushHoverHold() {
+        hoverHoldCount += 1
+        pendingHoverWorkItem?.cancel()
+    }
+
+    /// Decrement the hover-hold counter. When the count reaches zero and the
+    /// pointer is outside the panel, collapse after the usual exit delay.
+    func popHoverHold() {
+        guard hoverHoldCount > 0 else { return }
+        hoverHoldCount -= 1
+        guard hoverHoldCount == 0, !isPointerInsidePanel, !isKeyboardPinned, !isDragging else { return }
+        handlePointerHoverChange(false)
     }
 }
 
