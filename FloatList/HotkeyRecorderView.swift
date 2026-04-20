@@ -68,13 +68,31 @@ final class HotkeyRecorderNSView: NSView {
     func refresh() {
         if isRecording {
             label.stringValue = "Recording… (⎋ cancel, ⌫ clear)"
-            layer?.borderColor = NSColor.controlAccentColor.cgColor
-            layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.12).cgColor
         } else {
             label.stringValue = displayString()
-            layer?.borderColor = NSColor.separatorColor.cgColor
-            layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         }
+        applyAppearanceColors()
+    }
+
+    /// Resolve NSColor → CGColor under the current effective appearance. Without
+    /// this, the layer caches the CGColor captured at the first `refresh()` and
+    /// never repaints when the user flips light/dark — leaving a stale white or
+    /// black field behind the shortcut text.
+    private func applyAppearanceColors() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            if isRecording {
+                layer?.borderColor = NSColor.controlAccentColor.cgColor
+                layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.12).cgColor
+            } else {
+                layer?.borderColor = NSColor.separatorColor.cgColor
+                layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+            }
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyAppearanceColors()
     }
 
     override func mouseDown(with event: NSEvent) {
