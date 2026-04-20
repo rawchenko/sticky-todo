@@ -744,11 +744,15 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
 }
 
 private struct GhostView: View {
+    @ObservedObject private var tweaks = LayoutTweaks.shared
+
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: tweaks.handleCornerRadius, style: .continuous)
         ZStack {
-            shape.fill(Color.white.opacity(0.08))
-            shape.strokeBorder(Color.white.opacity(0.55), lineWidth: 1.5)
+            shape.fill(Color.accentColor.opacity(0.18))
+            shape.strokeBorder(Color.accentColor.opacity(0.9), lineWidth: 1.5)
         }
+        .compositingGroup()
+        .shadow(color: Color.black.opacity(0.22), radius: 6, x: 0, y: 2)
     }
 }

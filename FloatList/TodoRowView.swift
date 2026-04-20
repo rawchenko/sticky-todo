@@ -294,12 +294,6 @@ private struct TodoRowSubtitleChip: View {
         Text(subtitle)
             .font(.system(size: tweaks.secondaryTextSize - 1, weight: .medium))
             .foregroundStyle(FloatListTheme.textSecondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(
-                Capsule()
-                    .fill(FloatListTheme.controlFill)
-            )
     }
 }
 
@@ -353,6 +347,8 @@ struct TodoRowView: View {
     var onRename: (String) -> Void = { _ in }
     var onDragChanged: (CGFloat) -> Void = { _ in }
     var onDragEnded: (CGFloat) -> Void = { _ in }
+    var moveDestinations: [TodoList] = []
+    var onMoveToList: (UUID) -> Void = { _ in }
     var isToggleEnabled = true
     var isReorderEnabled = true
 
@@ -539,6 +535,20 @@ struct TodoRowView: View {
                         systemImage: item.isCompleted ? "circle" : "checkmark.circle"
                     )
                 }
+                if !moveDestinations.isEmpty {
+                    Divider()
+                    Menu {
+                        ForEach(moveDestinations) { list in
+                            Button {
+                                onMoveToList(list.id)
+                            } label: {
+                                Label(list.name, systemImage: list.icon)
+                            }
+                        }
+                    } label: {
+                        Label("Move to…", systemImage: "folder")
+                    }
+                }
                 Divider()
                 Button(role: .destructive) {
                     onDelete()
@@ -582,6 +592,7 @@ struct TodoRowView: View {
                     textColor: NSColor(FloatListTheme.textPrimary),
                     placeholderColor: .placeholderTextColor,
                     maxLines: 5,
+                    verticalInset: 0,
                     onSubmit: commitAndExit,
                     onCancel: cancelEdit,
                     onFocusChange: { focused in

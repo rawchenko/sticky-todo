@@ -8,6 +8,7 @@ struct AutoGrowingInputField: NSViewRepresentable {
     var textColor: NSColor
     var placeholderColor: NSColor
     var maxLines: Int
+    var verticalInset: CGFloat = 4
     var onSubmit: () -> Void
     var onCancel: (() -> Void)? = nil
     var onFocusChange: ((Bool) -> Void)? = nil
@@ -17,7 +18,7 @@ struct AutoGrowingInputField: NSViewRepresentable {
         let textView = GrowingTextView()
         textView.delegate = context.coordinator
         textView.textContainer?.lineFragmentPadding = 0
-        textView.textContainerInset = NSSize(width: 0, height: 4)
+        textView.textContainerInset = NSSize(width: 0, height: verticalInset)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
@@ -73,6 +74,11 @@ struct AutoGrowingInputField: NSViewRepresentable {
         if textView.placeholderColor != placeholderColor { textView.placeholderColor = placeholderColor }
         if textView.maxLines != maxLines {
             textView.maxLines = maxLines
+            textView.invalidateIntrinsicContentSize()
+        }
+        let desiredInset = NSSize(width: 0, height: verticalInset)
+        if textView.textContainerInset != desiredInset {
+            textView.textContainerInset = desiredInset
             textView.invalidateIntrinsicContentSize()
         }
     }
