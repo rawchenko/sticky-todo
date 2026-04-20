@@ -43,7 +43,7 @@ private struct IconCell: View {
         Image(systemName: symbol)
             .symbolVariant(.fill)
             .font(.system(size: 16, weight: .medium))
-            .symbolRenderingMode(.hierarchical)
+            .symbolRenderingMode(.monochrome)
             .foregroundStyle(FloatListTheme.textPrimary)
             .frame(width: 32, height: 32)
             .background(

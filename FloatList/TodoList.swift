@@ -5,10 +5,10 @@ struct TodoList: Identifiable, Codable, Equatable {
     static let defaultName = "New List"
     static let completedID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
     static let completedName = "Completed"
-    static let completedIcon = "checkmark.circle"
+    static let completedIcon = "checkmark.circle.fill"
     static let trashID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
     static let trashName = "Trash"
-    static let trashIcon = "trash"
+    static let trashIcon = "trash.fill"
     /// SF Symbol name shown as the list icon. All renderers apply
     /// `.symbolVariant(.fill)`, so prefer base names without `.fill`.
     static let defaultIcon = "checklist"

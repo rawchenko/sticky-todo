@@ -1,7 +1,23 @@
 {
   "images" : [
     {
-      "filename" : "PanelGlyph.svg",
+      "appearances" : [
+        {
+          "appearance" : "luminosity",
+          "value" : "light"
+        }
+      ],
+      "filename" : "PanelGlyph.LightTheme.svg",
+      "idiom" : "universal"
+    },
+    {
+      "appearances" : [
+        {
+          "appearance" : "luminosity",
+          "value" : "dark"
+        }
+      ],
+      "filename" : "PanelGlyph.DarkTheme.svg",
       "idiom" : "universal"
     }
   ],
@@ -10,7 +26,6 @@
     "version" : 1
   },
   "properties" : {
-    "preserves-vector-representation" : true,
-    "template-rendering-intent" : "template"
+    "preserves-vector-representation" : true
   }
 }

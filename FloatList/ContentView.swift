@@ -4,6 +4,79 @@ import AppKit
 private let escapeKeyCode: UInt16 = 53
 private let undoKeyCode: UInt16 = 6   // kVK_ANSI_Z
 
+private struct TaskListViewportPreferenceKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
+    }
+}
+
+private final class TaskListScrollController: ObservableObject {
+    weak var scrollView: NSScrollView?
+
+    func attach(_ scrollView: NSScrollView?) {
+        self.scrollView = scrollView
+    }
+
+    @discardableResult
+    func scrollBy(_ deltaY: CGFloat) -> CGFloat {
+        guard let scrollView, let documentView = scrollView.documentView else { return 0 }
+
+        let clipView = scrollView.contentView
+        var bounds = clipView.bounds
+        let minY: CGFloat = 0
+        let maxY = max(0, documentView.bounds.height - bounds.height)
+        let previousY = bounds.origin.y
+        let nextY = min(max(previousY + deltaY, minY), maxY)
+        guard abs(nextY - previousY) > 0.01 else { return 0 }
+
+        bounds.origin.y = nextY
+        clipView.scroll(to: bounds.origin)
+        scrollView.reflectScrolledClipView(clipView)
+        return nextY - previousY
+    }
+}
+
+private struct TaskListScrollAccessor: NSViewRepresentable {
+    typealias NSViewType = ResolverView
+
+    var onResolve: (NSScrollView?) -> Void
+
+    func makeNSView(context: Context) -> ResolverView {
+        let view = ResolverView()
+        view.onResolve = onResolve
+        return view
+    }
+
+    func updateNSView(_ nsView: ResolverView, context: Context) {
+        nsView.onResolve = onResolve
+        nsView.resolveEnclosingScrollView()
+    }
+
+    final class ResolverView: NSView {
+        var onResolve: ((NSScrollView?) -> Void)?
+
+        override var isFlipped: Bool { true }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            resolveEnclosingScrollView()
+        }
+
+        override func layout() {
+            super.layout()
+            resolveEnclosingScrollView()
+        }
+
+        func resolveEnclosingScrollView() {
+            DispatchQueue.main.async { [weak self] in
+                self?.onResolve?(self?.enclosingScrollView)
+            }
+        }
+    }
+}
+
 private struct AddListButton: View {
     var action: () -> Void
 
@@ -99,7 +172,7 @@ private struct UndoButton: View {
             Image(systemName: "arrow.uturn.backward")
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(FloatListTheme.textPrimary)
-                .symbolRenderingMode(.hierarchical)
+                .symbolRenderingMode(.monochrome)
                 .symbolEffect(.bounce, value: undoTick)
         }
     }
@@ -114,10 +187,10 @@ private struct SettingsButton: View {
             action: openSettings,
             onHoverStart: { spinCount += 1 }
         ) {
-            Image(systemName: "gearshape")
+            Image(systemName: "gear")
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(FloatListTheme.textPrimary)
-                .symbolRenderingMode(.hierarchical)
+                .symbolRenderingMode(.monochrome)
                 .rotationEffect(.degrees(Double(spinCount) * 60))
                 .animation(.spring(response: 0.55, dampingFraction: 0.62), value: spinCount)
         }
@@ -132,12 +205,16 @@ struct ContentView: View {
     @ObservedObject var store: TodoStore
     @ObservedObject var panelManager: PanelManager
     @ObservedObject private var tweaks = LayoutTweaks.shared
+    @StateObject private var taskListScrollController = TaskListScrollController()
+    @State private var pendingToggleAnimations: [UUID: PendingToggleAnimation] = [:]
     @State private var newTaskTitle = ""
     @State private var dismissedRecoveryNoticeID: UUID?
-    @State private var draggingID: UUID?
-    @State private var dragOffset: CGFloat = 0
+    @State private var dragSession: DragSession?
     @State private var rowHeights: [UUID: CGFloat] = [:]
-    @State private var lastTargetIndex: Int?
+    @State private var rowFrames: [UUID: CGRect] = [:]
+    @State private var taskListViewport: CGRect = .zero
+    @State private var autoScrollTask: Task<Void, Never>?
+    @State private var settleTask: Task<Void, Never>?
     @State private var escapeMonitor: Any?
     @State private var undoMonitor: Any?
     @State private var undoTick: Int = 0
@@ -147,9 +224,39 @@ struct ContentView: View {
     @State private var isHoldingForDeletePrompt = false
     @State private var expandedCompletedListIDs: Set<UUID> = []
     @State private var hoveredCompletedToggleListID: UUID?
-    @FocusState private var isInputFocused: Bool
+    @State private var isHoldingForInput = false
 
-    private static let reorderAnimation = Animation.spring(response: 0.35, dampingFraction: 0.78)
+    private var hasInputDraft: Bool {
+        newTaskTitle.contains { !$0.isWhitespace && !$0.isNewline }
+    }
+
+    private static let reorderAnimation = Animation.spring(response: 0.28, dampingFraction: 0.86)
+    private static let reorderStepAnimation = Animation.interactiveSpring(response: 0.22, dampingFraction: 0.9)
+    private static let reorderSettleDelayNanoseconds: UInt64 = 170_000_000
+    private static let autoScrollFrameNanoseconds: UInt64 = 16_666_667
+    private static let autoScrollFrameDuration: CGFloat = 1.0 / 60.0
+    private static let rowToggleExitAnimation = Animation.easeOut(duration: 0.18)
+    private static let rowToggleCommitDelayNanoseconds: UInt64 = 2_000_000_000
+
+    private struct PendingToggleAnimation: Equatable {
+        let targetCompleted: Bool
+    }
+
+    private struct DragSession {
+        let item: TodoItem
+        let originalIndex: Int
+        let initialFrame: CGRect
+        let frozenRowHeight: CGFloat
+        var gestureTranslation: CGFloat
+        var lastCompositeTranslation: CGFloat
+        var dragDirection: ReorderDragDirection
+        var autoScrollVelocity: CGFloat
+        var targetIndex: Int
+
+        var overlayMidY: CGFloat {
+            initialFrame.midY + gestureTranslation
+        }
+    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -189,7 +296,14 @@ struct ContentView: View {
         .onDisappear {
             removeEscapeMonitor()
             removeUndoMonitor()
+            stopAutoScrollLoop()
+            settleTask?.cancel()
+            settleTask = nil
             releaseDeletePromptHoldIfNeeded()
+            setInputHoverHold(false)
+        }
+        .onChange(of: hasInputDraft) { _, hold in
+            setInputHoverHold(hold)
         }
         .alert(
             deleteAlertTitle,
@@ -253,6 +367,16 @@ struct ContentView: View {
     private func releaseDeletePromptHoldIfNeeded() {
         if isHoldingForDeletePrompt {
             isHoldingForDeletePrompt = false
+            panelManager.popHoverHold()
+        }
+    }
+
+    private func setInputHoverHold(_ hold: Bool) {
+        guard hold != isHoldingForInput else { return }
+        isHoldingForInput = hold
+        if hold {
+            panelManager.pushHoverHold()
+        } else {
             panelManager.popHoverHold()
         }
     }
@@ -405,13 +529,13 @@ struct ContentView: View {
                 .tracking(-0.56)
                 .foregroundStyle(FloatListTheme.textPrimary.opacity(0.95))
 
-            Text(isInputFocused ? "Press ⏎ to add" : "Type a task below")
+            Text(hasInputDraft ? "Press ⏎ to add" : "Type a task below")
                 .font(.system(size: tweaks.bodyTextSize))
                 .foregroundStyle(FloatListTheme.textSecondary)
         }
-        .opacity(isInputFocused ? 0.42 : 0.7)
+        .opacity(hasInputDraft ? 0.42 : 0.7)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .animation(.easeInOut(duration: 0.2), value: isInputFocused)
+        .animation(.easeInOut(duration: 0.2), value: hasInputDraft)
     }
 
     private var trashEmptyState: some View {
@@ -458,54 +582,106 @@ struct ContentView: View {
     }
 
     private var taskList: some View {
-        ScrollView {
-            LazyVStack(spacing: tweaks.rowSpacing) {
-                if let listID = selectedRegularListID {
-                    if sortedItems.isEmpty && !currentCompletedItems.isEmpty {
-                        inlineEmptyState
-                    }
+        ZStack(alignment: .topLeading) {
+            ScrollView {
+                LazyVStack(spacing: tweaks.rowSpacing) {
+                    if let listID = selectedRegularListID {
+                        regularListSection
 
-                    ForEach(sortedItems) { item in
-                        taskRow(item)
-                            .transition(.opacity.combined(with: .move(edge: .top)))
-                    }
+                        if !currentCompletedItems.isEmpty {
+                            completedToggleButton(for: listID, count: currentCompletedItems.count)
 
-                    if !currentCompletedItems.isEmpty {
-                        completedToggleButton(for: listID, count: currentCompletedItems.count)
-
-                        if isCompletedExpanded(for: listID) {
-                            ForEach(currentCompletedItems) { item in
-                                taskRow(item, isReorderEnabled: false)
-                                    .transition(.opacity.combined(with: .move(edge: .top)))
+                            if isCompletedExpanded(for: listID) {
+                                ForEach(currentCompletedItems) { item in
+                                    taskRow(item, isReorderEnabled: false)
+                                        .transition(.opacity.combined(with: .move(edge: .top)))
+                                }
                             }
                         }
-                    }
-                } else {
-                    ForEach(sortedItems) { item in
-                        taskRow(
-                            item,
-                            subtitle: store.isSpecialListSelected ? store.sourceListName(for: item) : nil,
-                            isReorderEnabled: false
-                        )
-                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    } else {
+                        ForEach(sortedItems) { item in
+                            taskRow(
+                                item,
+                                subtitle: store.isSpecialListSelected ? store.sourceListName(for: item) : nil,
+                                isReorderEnabled: false
+                            )
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
                     }
                 }
+                .padding(.horizontal, tweaks.contentHorizontalPadding)
+                .padding(.vertical, 4)
             }
-            .padding(.horizontal, tweaks.contentHorizontalPadding)
-            .padding(.vertical, 4)
-            .coordinateSpace(name: "list")
-            .onPreferenceChange(RowHeightPreferenceKey.self) { heights in
-                rowHeights.merge(heights) { _, new in new }
+            .background(TaskListScrollAccessor { scrollView in
+                taskListScrollController.attach(scrollView)
+            })
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .preference(
+                            key: TaskListViewportPreferenceKey.self,
+                            value: geo.frame(in: .named("taskListContent"))
+                        )
+                }
+            )
+
+            if let dragSession {
+                dragOverlay(for: dragSession)
             }
-            .onChange(of: store.items.map(\.id)) { _, ids in
-                let live = Set(ids)
-                rowHeights = rowHeights.filter { live.contains($0.key) }
-            }
-            .onChange(of: store.selectedListID) {
+        }
+        .coordinateSpace(name: "taskListContent")
+        .coordinateSpace(name: "list")
+        .onPreferenceChange(RowHeightPreferenceKey.self) { heights in
+            rowHeights.merge(heights) { _, new in new }
+        }
+        .onPreferenceChange(RowFramePreferenceKey.self) { frames in
+            rowFrames.merge(frames) { _, new in new }
+            refreshDragSessionTarget(triggerHaptic: true)
+        }
+        .onPreferenceChange(TaskListViewportPreferenceKey.self) { viewport in
+            taskListViewport = viewport
+            refreshDragSessionTarget(triggerHaptic: false)
+        }
+        .onChange(of: store.items.map(\.id)) { _, ids in
+            let live = Set(ids)
+            rowHeights = rowHeights.filter { live.contains($0.key) }
+            rowFrames = rowFrames.filter { live.contains($0.key) }
+            pendingToggleAnimations = pendingToggleAnimations.filter { live.contains($0.key) }
+            if let draggingID, !live.contains(draggingID) {
                 cancelDrag()
             }
         }
+        .onChange(of: store.selectedListID) {
+            cancelDrag()
+        }
         .frame(maxHeight: .infinity)
+        .animation(Self.reorderStepAnimation, value: dragSession?.targetIndex)
+    }
+
+    @ViewBuilder
+    private var regularListSection: some View {
+        let items = projectedRegularItems
+
+        if items.isEmpty && !currentCompletedItems.isEmpty {
+            inlineEmptyState
+        }
+
+        ForEach(items) { item in
+            if draggingID == item.id {
+                Color.clear
+                    .frame(height: dragSession?.item.id == item.id ? (dragSession?.frozenRowHeight ?? RowMetrics.estimatedHeight) : (rowHeights[item.id] ?? RowMetrics.estimatedHeight))
+                    .frame(maxWidth: .infinity)
+                    .overlay {
+                        dragLandingIndicator()
+                    }
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            } else {
+                taskRow(item)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
     }
 
     private func taskRow(
@@ -514,17 +690,17 @@ struct ContentView: View {
         isReorderEnabled: Bool? = nil
     ) -> some View {
         let isTrashItem = store.isTrashSelected
+        let pendingToggleAnimation = pendingToggleAnimations[item.id]
         return TodoRowView(
             item: item,
             isTrashItem: isTrashItem,
-            isDragging: draggingID == item.id,
+            isDragging: false,
             isDragActive: draggingID != nil,
-            yOffset: offset(for: item.id),
             subtitle: subtitle,
+            completionOverride: pendingToggleAnimation?.targetCompleted,
+            isExiting: pendingToggleAnimation != nil,
             onToggle: {
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-                    store.toggle(item)
-                }
+                handleToggle(for: item)
             },
             onDelete: {
                 withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
@@ -549,7 +725,7 @@ struct ContentView: View {
             onDragEnded: { translation in
                 commitDrag(for: item.id, translation: translation)
             },
-            isToggleEnabled: !isTrashItem,
+            isToggleEnabled: !isTrashItem && pendingToggleAnimation == nil && draggingID == nil,
             isReorderEnabled: isReorderEnabled ?? !store.isSpecialListSelected
         )
         .id(RowRenderIdentity(
@@ -563,26 +739,25 @@ struct ContentView: View {
 
     private var inputBar: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            TextField(
-                sortedItems.isEmpty ? "What's your first task?" : "What's next?",
+            AutoGrowingInputField(
                 text: $newTaskTitle,
-                axis: .vertical
+                placeholder: sortedItems.isEmpty ? "What's your first task?" : "What's next?",
+                font: NSFont.systemFont(ofSize: tweaks.bodyTextSize),
+                textColor: NSColor(FloatListTheme.textPrimary),
+                placeholderColor: .placeholderTextColor,
+                maxLines: 5,
+                onSubmit: submitTask
             )
-                .textFieldStyle(.plain)
-                .font(.system(size: tweaks.bodyTextSize))
-                .foregroundStyle(FloatListTheme.textPrimary)
-                .lineLimit(1...5)
-                .focused($isInputFocused)
-                .onSubmit(submitTask)
-                .padding(.vertical, 4)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
 
             Button(action: submitTask) {
                 Image(systemName: "arrow.up")
             }
-            .floatListGlassButton(prominent: canSubmit)
-            .disabled(!canSubmit)
-            .pointerCursor(canSubmit ? .pointingHand : nil)
-            .animation(.easeInOut(duration: 0.15), value: canSubmit)
+            .floatListGlassButton(prominent: hasInputDraft)
+            .disabled(!hasInputDraft)
+            .pointerCursor(hasInputDraft ? .pointingHand : nil)
+            .animation(.easeInOut(duration: 0.15), value: hasInputDraft)
         }
         .padding(.leading, tweaks.inputLeadingPadding)
         .padding(.trailing, tweaks.inputTrailingPadding)
@@ -595,10 +770,6 @@ struct ContentView: View {
         .animation(.easeOut(duration: 0.18), value: newTaskTitle)
     }
 
-    private var canSubmit: Bool {
-        !newTaskTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
     private func submitTask() {
         let trimmed = newTaskTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -608,11 +779,8 @@ struct ContentView: View {
 
     private var collapsedGlyph: some View {
         Image("PanelGlyph")
-            .renderingMode(.template)
             .resizable()
             .aspectRatio(contentMode: .fit)
-            .frame(width: 18, height: 18)
-            .foregroundStyle(FloatListTheme.textPrimary)
             .frame(width: tweaks.collapsedWidth, height: tweaks.collapsedHeight)
             .compositingGroup()
             .blur(radius: collapsedBlur)
@@ -670,6 +838,23 @@ struct ContentView: View {
         store.visibleItems
     }
 
+    private var draggingID: UUID? {
+        dragSession?.item.id
+    }
+
+    private var projectedRegularItems: [TodoItem] {
+        guard let session = dragSession else { return sortedItems }
+        var items = sortedItems
+        guard let currentIndex = items.firstIndex(where: { $0.id == session.item.id }) else {
+            return items
+        }
+
+        let moving = items.remove(at: currentIndex)
+        let target = min(max(session.targetIndex, 0), items.count)
+        items.insert(moving, at: target)
+        return items
+    }
+
     private var shouldShowNoListsEmptyState: Bool {
         store.lists.isEmpty && !store.isSpecialListSelected && !store.hasCompletedItems && !store.hasTrashedItems
     }
@@ -698,20 +883,21 @@ struct ContentView: View {
                 .tracking(-0.48)
                 .foregroundStyle(FloatListTheme.textPrimary.opacity(0.95))
 
-            Text(isInputFocused ? "Press ⏎ to add" : "Type a task below")
+            Text(hasInputDraft ? "Press ⏎ to add" : "Type a task below")
                 .font(.system(size: tweaks.bodyTextSize))
                 .foregroundStyle(FloatListTheme.textSecondary)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 18)
         .frame(maxWidth: .infinity)
-        .opacity(isInputFocused ? 0.42 : 0.7)
-        .animation(.easeInOut(duration: 0.2), value: isInputFocused)
+        .opacity(hasInputDraft ? 0.42 : 0.7)
+        .animation(.easeInOut(duration: 0.2), value: hasInputDraft)
     }
 
     private func completedToggleButton(for listID: UUID, count: Int) -> some View {
         let expanded = isCompletedExpanded(for: listID)
-        let isHovering = hoveredCompletedToggleListID == listID
+        let isDraggingTask = draggingID != nil
+        let isHovering = !isDraggingTask && hoveredCompletedToggleListID == listID
 
         return Button {
             withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
@@ -737,8 +923,13 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .background(WindowDragBlocker())
-        .pointerCursor(.pointingHand)
+        .pointerCursor(isDraggingTask ? nil : .pointingHand)
+        .allowsHitTesting(!isDraggingTask)
         .onHover { hovering in
+            guard !isDraggingTask else {
+                hoveredCompletedToggleListID = nil
+                return
+            }
             hoveredCompletedToggleListID = hovering ? listID : nil
         }
         .padding(.top, 2)
@@ -770,106 +961,308 @@ struct ContentView: View {
         let subtitle: String?
     }
 
+    private func handleToggle(for item: TodoItem) {
+        guard pendingToggleAnimations[item.id] == nil else { return }
+
+        let pendingAnimation = PendingToggleAnimation(targetCompleted: !item.isCompleted)
+        withAnimation(Self.rowToggleExitAnimation) {
+            pendingToggleAnimations[item.id] = pendingAnimation
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: Self.rowToggleCommitDelayNanoseconds)
+
+            guard pendingToggleAnimations[item.id] == pendingAnimation else { return }
+
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                store.toggle(item)
+                pendingToggleAnimations.removeValue(forKey: item.id)
+            }
+        }
+    }
+
     // MARK: - Drag
 
     private func handleDragChanged(for id: UUID, translation: CGFloat) {
-        let order = sortedItems.map(\.id)
-        if draggingID == nil {
-            draggingID = id
-            lastTargetIndex = order.firstIndex(of: id)
-            fireHaptic(.levelChange)
-            installEscapeMonitor()
-        }
-        dragOffset = translation
-        guard let original = order.firstIndex(of: id) else { return }
-        let target = targetIndex(from: original, offset: translation, in: order)
-        if target != lastTargetIndex {
-            lastTargetIndex = target
-            fireHaptic(.alignment)
-        }
+        let items = sortedItems
+        let order = items.map(\.id)
+        guard beginDragSessionIfNeeded(for: id, translation: translation, items: items, order: order) else { return }
+
+        guard var session = dragSession, session.item.id == id else { return }
+        session = updatedDragSession(session, translation: translation, in: order)
+        applyDragSessionUpdate(session, triggerHaptic: true)
+        syncAutoScrollLoop(with: session)
     }
 
     private func commitDrag(for id: UUID, translation: CGFloat) {
-        guard draggingID == id else {
+        guard var session = dragSession, session.item.id == id else {
             removeEscapeMonitor()
-            lastTargetIndex = nil
             return
         }
+        stopAutoScrollLoop()
+        settleTask?.cancel()
+        settleTask = nil
+
         let order = sortedItems.map(\.id)
-        let original = order.firstIndex(of: id) ?? 0
-        let target = targetIndex(from: original, offset: translation, in: order)
+        session = updatedDragSession(
+            session,
+            translation: translation,
+            in: order,
+            includeAutoScroll: false
+        )
+
+        let target = session.targetIndex
+        session.gestureTranslation = dropTranslation(for: session, target: target, in: order)
+        session.lastCompositeTranslation = session.gestureTranslation
+
+        let settledSession = session
         withAnimation(Self.reorderAnimation) {
-            if target != original {
-                store.move(from: original, to: target)
-            }
-            dragOffset = 0
-            draggingID = nil
+            dragSession = settledSession
         }
-        lastTargetIndex = nil
+
         removeEscapeMonitor()
+
+        settleTask = Task { @MainActor in
+            defer { settleTask = nil }
+            try? await Task.sleep(nanoseconds: Self.reorderSettleDelayNanoseconds)
+            guard dragSession?.item.id == id else { return }
+
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                if target != settledSession.originalIndex {
+                    store.move(from: settledSession.originalIndex, to: target)
+                }
+                dragSession = nil
+            }
+        }
     }
 
     private func cancelDrag() {
+        stopAutoScrollLoop()
+        settleTask?.cancel()
+        settleTask = nil
+        hoveredCompletedToggleListID = nil
         withAnimation(Self.reorderAnimation) {
-            dragOffset = 0
-            draggingID = nil
+            dragSession = nil
         }
-        lastTargetIndex = nil
         removeEscapeMonitor()
+    }
+
+    private func refreshDragSessionTarget(triggerHaptic: Bool) {
+        guard settleTask == nil else { return }
+        guard var session = dragSession else { return }
+
+        let order = sortedItems.map(\.id)
+        guard order.contains(session.item.id) else {
+            cancelDrag()
+            return
+        }
+
+        session = updatedDragSession(session, in: order)
+        applyDragSessionUpdate(session, triggerHaptic: triggerHaptic)
+        syncAutoScrollLoop(with: session)
+    }
+
+    private func applyDragSessionUpdate(_ session: DragSession, triggerHaptic: Bool) {
+        let previousTarget = dragSession?.targetIndex
+        if previousTarget != session.targetIndex {
+            withAnimation(Self.reorderStepAnimation) {
+                dragSession = session
+            }
+            if triggerHaptic {
+                fireHaptic(.alignment)
+            }
+        } else {
+            dragSession = session
+        }
+    }
+
+    private func syncAutoScrollLoop(with session: DragSession) {
+        if abs(session.autoScrollVelocity) > 0.1 {
+            startAutoScrollLoop()
+        } else {
+            stopAutoScrollLoop()
+        }
+    }
+
+    private func startAutoScrollLoop() {
+        guard autoScrollTask == nil else { return }
+
+        autoScrollTask = Task { @MainActor in
+            while !Task.isCancelled {
+                guard var session = dragSession else { break }
+
+                let velocity = currentAutoScrollVelocity(for: session)
+                if abs(velocity) <= 0.1 {
+                    session.autoScrollVelocity = 0
+                    dragSession = session
+                    break
+                }
+
+                let deltaY = velocity * Self.autoScrollFrameDuration
+                let actualDelta = taskListScrollController.scrollBy(deltaY)
+                session.autoScrollVelocity = velocity
+                dragSession = session
+
+                if abs(actualDelta) <= 0.01 {
+                    session.autoScrollVelocity = 0
+                    dragSession = session
+                    break
+                }
+
+                refreshDragSessionTarget(triggerHaptic: true)
+
+                try? await Task.sleep(nanoseconds: Self.autoScrollFrameNanoseconds)
+            }
+
+            if var session = dragSession, abs(session.autoScrollVelocity) > 0.1 {
+                session.autoScrollVelocity = 0
+                dragSession = session
+            }
+            autoScrollTask = nil
+        }
+    }
+
+    private func stopAutoScrollLoop() {
+        autoScrollTask?.cancel()
+        autoScrollTask = nil
+        if var session = dragSession, abs(session.autoScrollVelocity) > 0.1 {
+            session.autoScrollVelocity = 0
+            dragSession = session
+        }
     }
 
     // MARK: - Drag math helpers
 
-    private func targetIndex(from original: Int, offset: CGFloat, in order: [UUID]) -> Int {
-        guard !order.isEmpty else { return 0 }
-        var idx = original
-        var accumulated: CGFloat = 0
-        if offset > 0 {
-            for i in (original + 1)..<order.count {
-                let h = rowHeights[order[i]] ?? RowMetrics.estimatedHeight
-                accumulated += h
-                if offset > accumulated - h / 2 {
-                    idx = i
-                } else {
-                    break
-                }
-            }
-        } else if offset < 0 {
-            for i in stride(from: original - 1, through: 0, by: -1) {
-                let h = rowHeights[order[i]] ?? RowMetrics.estimatedHeight
-                accumulated += h
-                if -offset > accumulated - h / 2 {
-                    idx = i
-                } else {
-                    break
-                }
-            }
+    private func beginDragSessionIfNeeded(
+        for id: UUID,
+        translation: CGFloat,
+        items: [TodoItem],
+        order: [UUID]
+    ) -> Bool {
+        if dragSession != nil {
+            return true
         }
-        return idx
+
+        guard let originalIndex = order.firstIndex(of: id),
+              let initialFrame = rowFrames[id]
+        else {
+            return false
+        }
+
+        settleTask?.cancel()
+        settleTask = nil
+        dragSession = DragSession(
+            item: items[originalIndex],
+            originalIndex: originalIndex,
+            initialFrame: initialFrame,
+            frozenRowHeight: rowHeights[id] ?? initialFrame.height,
+            gestureTranslation: translation,
+            lastCompositeTranslation: translation,
+            dragDirection: .stationary,
+            autoScrollVelocity: 0,
+            targetIndex: originalIndex
+        )
+        hoveredCompletedToggleListID = nil
+        fireHaptic(.levelChange)
+        installEscapeMonitor()
+        return true
     }
 
-    private func yPosition(for index: Int, in order: [UUID]) -> CGFloat {
-        var y: CGFloat = 0
-        for i in 0..<index {
-            y += rowHeights[order[i]] ?? RowMetrics.estimatedHeight
-        }
-        return y
+    private func updatedDragSession(
+        _ session: DragSession,
+        translation: CGFloat? = nil,
+        in order: [UUID],
+        includeAutoScroll: Bool = true
+    ) -> DragSession {
+        var updated = session
+        let nextTranslation = translation ?? session.gestureTranslation
+        let delta = nextTranslation - session.lastCompositeTranslation
+        updated.dragDirection = ReorderDragDirection(delta: delta, fallback: session.dragDirection)
+        updated.gestureTranslation = nextTranslation
+        updated.lastCompositeTranslation = nextTranslation
+        updated.targetIndex = resolvedTargetIndex(for: updated, in: order)
+        updated.autoScrollVelocity = includeAutoScroll ? currentAutoScrollVelocity(for: updated) : 0
+        return updated
     }
 
-    private func offset(for id: UUID) -> CGFloat {
-        guard let draggingID else { return 0 }
-        if id == draggingID { return dragOffset }
-        let order = sortedItems.map(\.id)
-        guard let originalIdx = order.firstIndex(of: draggingID),
-              let myIdx = order.firstIndex(of: id) else { return 0 }
-        let target = targetIndex(from: originalIdx, offset: dragOffset, in: order)
-        if target == originalIdx { return 0 }
+    private func resolvedTargetIndex(for session: DragSession, in order: [UUID]) -> Int {
+        let draggingID = session.item.id
+        let overlayMidY = session.overlayMidY
+        let remaining = order.filter { $0 != draggingID }
+        let frames = remaining.enumerated().map { index, rowID in
+            rowFrames[rowID] ?? estimatedFrame(for: rowID, at: index, in: remaining, session: session)
+        }
+        return min(
+            max(
+                ReorderInteractionMath.targetIndex(
+                    for: overlayMidY,
+                    frames: frames,
+                    direction: session.dragDirection
+                ),
+                0
+            ),
+            remaining.count
+        )
+    }
 
-        var newOrder = order
-        newOrder.remove(at: originalIdx)
-        newOrder.insert(draggingID, at: target)
-        guard let newIdx = newOrder.firstIndex(of: id) else { return 0 }
-        return yPosition(for: newIdx, in: newOrder) - yPosition(for: myIdx, in: order)
+    private func currentAutoScrollVelocity(for session: DragSession) -> CGFloat {
+        ReorderInteractionMath.autoScrollVelocity(
+            pointerY: session.overlayMidY,
+            viewport: taskListViewport
+        )
+    }
+
+    private func estimatedFrame(for id: UUID, at index: Int, in order: [UUID], session: DragSession? = nil) -> CGRect {
+        let activeSession = session ?? dragSession
+        let y = order.prefix(index).reduce(CGFloat(0)) { partial, rowID in
+            if activeSession?.item.id == rowID {
+                return partial + (activeSession?.frozenRowHeight ?? RowMetrics.estimatedHeight)
+            }
+            return partial + (rowHeights[rowID] ?? RowMetrics.estimatedHeight)
+        } + (CGFloat(index) * tweaks.rowSpacing)
+        let height: CGFloat
+        if activeSession?.item.id == id {
+            height = activeSession?.frozenRowHeight ?? RowMetrics.estimatedHeight
+        } else {
+            height = rowHeights[id] ?? RowMetrics.estimatedHeight
+        }
+        let width = activeSession?.initialFrame.width ?? max(0, tweaks.expandedWidth - (tweaks.contentHorizontalPadding * 2))
+        let minX = activeSession?.initialFrame.minX ?? tweaks.contentHorizontalPadding
+        return CGRect(x: minX, y: y, width: width, height: height)
+    }
+
+    private func dropTranslation(for session: DragSession, target: Int, in order: [UUID]) -> CGFloat {
+        var projectedOrder = order.filter { $0 != session.item.id }
+        let clampedTarget = min(max(target, 0), projectedOrder.count)
+        projectedOrder.insert(session.item.id, at: clampedTarget)
+        let destinationFrame = estimatedFrame(for: session.item.id, at: clampedTarget, in: projectedOrder, session: session)
+        return destinationFrame.midY - session.initialFrame.midY
+    }
+
+    private func dragOverlay(for session: DragSession) -> some View {
+        TodoRowDragPreview(item: session.item)
+            .frame(width: session.initialFrame.width, height: session.frozenRowHeight, alignment: .topLeading)
+            .position(
+                x: session.initialFrame.midX,
+                y: session.initialFrame.midY + session.gestureTranslation
+            )
+            .zIndex(1_000)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+
+    private func dragLandingIndicator() -> some View {
+        RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous)
+            .fill(FloatListTheme.controlFillStrong.opacity(0.08))
+            .overlay(
+                RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous)
+                    .stroke(FloatListTheme.hairline.opacity(0.18), lineWidth: 1)
+            )
+            .shadow(color: FloatListTheme.panelShadow(opacity: 0.05), radius: 4, y: 1)
+            .padding(.vertical, 3)
+            .allowsHitTesting(false)
     }
 
     private func fireHaptic(_ pattern: NSHapticFeedbackManager.FeedbackPattern) {
