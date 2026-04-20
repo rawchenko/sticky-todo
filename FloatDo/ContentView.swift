@@ -44,12 +44,19 @@ private struct SettingsButton: View {
     var body: some View {
         Button(action: openSettings) {
             Image(systemName: "gearshape")
-                .font(.system(size: tweaks.addListIconSize + 1, weight: .medium))
+                .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(FloatDoTheme.textSecondary)
                 .symbolRenderingMode(.hierarchical)
                 .rotationEffect(.degrees(Double(spinCount) * 60))
-                .frame(width: 22, height: 18)
-                .contentShape(Rectangle())
+                .frame(width: 14, height: 14)
+                .padding(.horizontal, tweaks.pillHorizontalPadding)
+                .padding(.vertical, tweaks.pillVerticalPadding)
+                .background(
+                    RoundedRectangle(cornerRadius: tweaks.pillCornerRadius, style: .continuous)
+                        .fill(isHovering ? FloatDoTheme.rowHover : Color.clear)
+                        .animation(.easeOut(duration: 0.12), value: isHovering)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: tweaks.pillCornerRadius, style: .continuous))
         }
         .buttonStyle(.plain)
         .pointerCursor(.pointingHand)
@@ -220,7 +227,7 @@ struct ContentView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 6) {
+        HStack(alignment: .top, spacing: 6) {
             if store.lists.isEmpty {
                 Text("No lists yet")
                     .font(.system(size: tweaks.secondaryTextSize))
