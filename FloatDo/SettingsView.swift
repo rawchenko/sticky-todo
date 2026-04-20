@@ -3,7 +3,8 @@ import SwiftUI
 struct SettingsView: View {
     @AppStorage(AppearanceMode.storageKey) private var appearanceRaw = AppearanceMode.system.rawValue
     @StateObject private var launchAtLogin = LaunchAtLoginController()
-    @StateObject private var hotkey = GlobalHotkey.shared
+    @StateObject private var hotkey = GlobalHotkey.toggleVisibility
+    @StateObject private var expandHotkey = GlobalHotkey.expandCollapse
 
     var body: some View {
         Form {
@@ -23,7 +24,7 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Global shortcut") {
+            Section("Global shortcuts") {
                 LabeledContent("Toggle panel") {
                     HotkeyRecorderView(
                         keyCode: hotkey.keyCode,
@@ -33,6 +34,19 @@ struct SettingsView: View {
                         },
                         onClear: {
                             hotkey.clearBinding()
+                        }
+                    )
+                    .frame(width: 200, height: 24)
+                }
+                LabeledContent("Expand / collapse") {
+                    HotkeyRecorderView(
+                        keyCode: expandHotkey.keyCode,
+                        modifiers: expandHotkey.modifiers,
+                        onCapture: { code, mods in
+                            expandHotkey.setBinding(keyCode: code, modifiers: mods)
+                        },
+                        onClear: {
+                            expandHotkey.clearBinding()
                         }
                     )
                     .frame(width: 200, height: 24)

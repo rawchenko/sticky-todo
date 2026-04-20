@@ -112,6 +112,7 @@ private enum DefaultsKey {
     static let panelAnchor = "FloatDo.panelAnchor.v2"
 }
 
+@MainActor
 class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     private var panel: KeyablePanel?
     private var ghostPanel: NSPanel?
@@ -125,6 +126,13 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     private var pendingSnapWorkItem: DispatchWorkItem?
     private var pendingHoverWorkItem: DispatchWorkItem?
     private var isPointerInsidePanel = false
+    /// Set when the user expands the panel via the global shortcut. While true,
+    /// hover-exit does not trigger collapse — the panel stays open until the
+    /// user explicitly collapses it (shortcut again, or pointer enters then
+    /// leaves). Without this, pressing the shortcut expands the panel and then
+    /// the tracking area immediately collapses it because the pointer isn't
+    /// over the newly-enlarged frame.
+    private var isKeyboardPinned = false
 
     func setup<Content: View>(contentView: Content) {
         let panel = KeyablePanel(
@@ -202,6 +210,25 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
             hidePanel()
         } else {
             showPanel()
+        }
+    }
+
+    /// If the panel is hidden, show it expanded. If visible, toggle between
+    /// collapsed and expanded. Used by the expand/collapse global shortcut so
+    /// the user can reveal the full panel without hovering the handle.
+    func showOrToggleExpansion() {
+        if panel?.isVisible != true {
+            showPanel()
+            isKeyboardPinned = true
+            expand()
+            return
+        }
+        if isCollapsed {
+            isKeyboardPinned = true
+            expand()
+        } else {
+            isKeyboardPinned = false
+            collapse()
         }
     }
 
@@ -312,15 +339,19 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
                 context.timingFunction = CAMediaTimingFunction(controlPoints: 0.18, 1.0, 0.22, 1.0)
                 panel.animator().setFrame(newFrame, display: true)
             } completionHandler: { [weak self] in
-                self?.isProgrammaticMove = false
-                self?.syncHoverStateWithPointerLocation(applyState: true)
+                MainActor.assumeIsolated {
+                    self?.isProgrammaticMove = false
+                    self?.syncHoverStateWithPointerLocation(applyState: true)
+                }
             }
         } else {
             isProgrammaticMove = true
             panel.setFrame(newFrame, display: true)
             DispatchQueue.main.async { [weak self] in
-                self?.isProgrammaticMove = false
-                self?.syncHoverStateWithPointerLocation(applyState: true)
+                MainActor.assumeIsolated {
+                    self?.isProgrammaticMove = false
+                    self?.syncHoverStateWithPointerLocation(applyState: true)
+                }
             }
         }
     }
@@ -448,7 +479,9 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
             ctx.duration = 0.16
             ghost.animator().alphaValue = 0
         } completionHandler: { [weak ghost] in
-            ghost?.orderOut(nil)
+            MainActor.assumeIsolated {
+                ghost?.orderOut(nil)
+            }
         }
     }
 
@@ -508,15 +541,22 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
         }
 
         if isHovered {
+            // Pointer entered the keyboard-pinned panel — release the pin so
+            // subsequent hover-exit can collapse normally.
+            isKeyboardPinned = false
             panel?.makeKey()
             expand()
+            return
+        }
+
+        if isKeyboardPinned {
             return
         }
 
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.syncHoverStateWithPointerLocation()
-            if !self.isPointerInsidePanel && !self.isDragging {
+            if !self.isPointerInsidePanel && !self.isDragging && !self.isKeyboardPinned {
                 self.collapse()
             }
         }
@@ -533,8 +573,9 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
         guard applyState else { return }
 
         if isPointerInside {
+            isKeyboardPinned = false
             expand()
-        } else {
+        } else if !isKeyboardPinned {
             collapse()
         }
     }
