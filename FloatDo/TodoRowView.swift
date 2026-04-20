@@ -289,13 +289,19 @@ struct TodoRowView: View {
     @State private var didPushCursor = false
     @State private var draftTitle = ""
     @State private var swipeOffset: CGFloat = 0
+    @State private var swipeBase: CGFloat = 0
+    @State private var swipeRest: SwipeRestSide?
     @State private var hasCommittedHaptic = false
     @State private var rowWidth: CGFloat = 0
     @State private var isEditing = false
     @FocusState private var isEditorFocused: Bool
     @ObservedObject private var tweaks = LayoutTweaks.shared
 
-    private var commitThreshold: CGFloat { max(80, rowWidth * 0.35) }
+    private enum SwipeRestSide { case leading, trailing }
+
+    private var commitThreshold: CGFloat { max(110, rowWidth * 0.5) }
+    private var revealThreshold: CGFloat { 28 }
+    private var revealWidth: CGFloat { 72 }
 
     private var titleColor: Color {
         item.isCompleted ? FloatDoTheme.textSecondary : FloatDoTheme.textPrimary
@@ -354,8 +360,13 @@ struct TodoRowView: View {
         .padding(.vertical, tweaks.rowVerticalPadding)
         .background(WindowDragBlocker())
         .background(
-            ClickOutsideDetector(isActive: isEditing) {
-                isEditorFocused = false
+            ClickOutsideDetector(isActive: isEditing || swipeRest != nil) {
+                if isEditing {
+                    isEditorFocused = false
+                }
+                if swipeRest != nil {
+                    closeReveal()
+                }
             }
         )
         .background(rowBackground)
@@ -364,13 +375,19 @@ struct TodoRowView: View {
         .background(swipeRevealLayer)
         .background(
             TwoFingerSwipeDetector(
-                onBegan: { hasCommittedHaptic = false },
+                onBegan: {
+                    swipeBase = swipeOffset
+                    swipeRest = nil
+                    hasCommittedHaptic = abs(swipeOffset) >= commitThreshold
+                },
                 onChanged: { total in applySwipeOffset(total) },
                 onEnded: { _, predicted in handleSwipeEnd(predictedEnd: predicted) },
                 onCancelled: {
                     withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
                         swipeOffset = 0
                     }
+                    swipeBase = 0
+                    swipeRest = nil
                     hasCommittedHaptic = false
                 }
             )
@@ -494,7 +511,9 @@ struct TodoRowView: View {
                     progress: min(1, swipeOffset / commitThreshold),
                     color: isTrashItem ? FloatDoTheme.controlFillStrong : FloatDoTheme.success,
                     systemImage: isTrashItem ? "arrow.uturn.backward.circle.fill" : "checkmark.circle.fill",
-                    alignment: .leading
+                    alignment: .leading,
+                    isInteractive: swipeRest == .leading,
+                    action: performPrimaryAction
                 )
             }
             Spacer(minLength: 0)
@@ -504,23 +523,29 @@ struct TodoRowView: View {
                     progress: min(1, -swipeOffset / commitThreshold),
                     color: FloatDoTheme.destructive,
                     systemImage: "trash.circle.fill",
-                    alignment: .trailing
+                    alignment: .trailing,
+                    isInteractive: swipeRest == .trailing,
+                    action: performSecondaryAction
                 )
             }
         }
-        .allowsHitTesting(false)
+        .allowsHitTesting(swipeRest != nil)
     }
 
+    @ViewBuilder
     private func revealPill(
         width: CGFloat,
         progress: CGFloat,
         color: Color,
         systemImage: String,
-        alignment: Alignment
+        alignment: Alignment,
+        isInteractive: Bool,
+        action: @escaping () -> Void
     ) -> some View {
-        ZStack(alignment: alignment) {
+        let displayProgress = isInteractive ? 1 : progress
+        let pill = ZStack(alignment: alignment) {
             RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous)
-                .fill(color.opacity(progress))
+                .fill(color.opacity(displayProgress))
             Image(systemName: systemImage)
                 .foregroundStyle(.white)
                 .font(.system(size: tweaks.actionIconSize + 4, weight: .semibold))
@@ -532,18 +557,28 @@ struct TodoRowView: View {
         .frame(width: width)
         .brightness(hasCommittedHaptic ? 0.08 : 0)
         .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hasCommittedHaptic)
+        .contentShape(Rectangle())
+
+        if isInteractive {
+            Button(action: action) { pill }
+                .buttonStyle(.plain)
+                .pointerCursor(.pointingHand)
+        } else {
+            pill
+        }
     }
 
     private func applySwipeOffset(_ total: CGFloat) {
-        let absT = abs(total)
-        let sign: CGFloat = total >= 0 ? 1 : -1
+        let raw = swipeBase + total
+        let absT = abs(raw)
+        let sign: CGFloat = raw >= 0 ? 1 : -1
         let threshold = commitThreshold
 
         // Linear up to the commit threshold, then saturate with diminishing
         // return so the row can still move but feels progressively firmer.
         let clamped: CGFloat
         if absT <= threshold {
-            clamped = total
+            clamped = raw
         } else {
             let maxExtra = threshold * 0.9
             let extra = absT - threshold
@@ -554,7 +589,13 @@ struct TodoRowView: View {
         swipeOffset = clamped
         let crossed = abs(clamped) >= commitThreshold
         if crossed != hasCommittedHaptic {
-            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+            let performer = NSHapticFeedbackManager.defaultPerformer
+            performer.perform(.levelChange, performanceTime: .now)
+            if crossed {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
+                    performer.perform(.levelChange, performanceTime: .now)
+                }
+            }
             hasCommittedHaptic = crossed
         }
     }
@@ -563,32 +604,65 @@ struct TodoRowView: View {
         // Velocity-based commit: honor either the current offset crossing the
         // threshold or the velocity projection doing so in the same direction.
         let current = swipeOffset
-        let sameDirection = (predictedEnd >= 0) == (current >= 0) || current == 0
-        let projected = sameDirection ? predictedEnd : 0
+        let predictedOffset = swipeBase + predictedEnd
+        let sameDirection = (predictedOffset >= 0) == (current >= 0) || current == 0
+        let projected = sameDirection ? predictedOffset : 0
         let decisionMag = max(abs(current), abs(projected))
         let direction: CGFloat = current != 0
             ? (current > 0 ? 1 : -1)
-            : (predictedEnd > 0 ? 1 : -1)
-        let shouldCommit = decisionMag >= commitThreshold
+            : (predictedOffset > 0 ? 1 : -1)
 
-        let revert = Animation.spring(response: 0.38, dampingFraction: 0.82)
-
-        if shouldCommit && direction > 0 {
-            if isTrashItem {
-                onRestore?()
+        if decisionMag >= commitThreshold {
+            if direction > 0 {
+                performPrimaryAction()
             } else {
-                onToggle()
+                performSecondaryAction()
             }
-            withAnimation(revert) { swipeOffset = 0 }
-        } else if shouldCommit && direction < 0 {
-            withAnimation(.easeOut(duration: 0.18)) {
-                swipeOffset = -max(rowWidth + 60, 400)
-            } completion: {
-                onDelete()
-            }
+        } else if decisionMag >= revealThreshold {
+            snapToRest(direction: direction)
         } else {
-            withAnimation(revert) { swipeOffset = 0 }
+            closeReveal()
         }
+    }
+
+    private func performPrimaryAction() {
+        if isTrashItem {
+            onRestore?()
+        } else {
+            onToggle()
+        }
+        closeReveal()
+    }
+
+    private func performSecondaryAction() {
+        swipeRest = nil
+        swipeBase = 0
+        hasCommittedHaptic = false
+        withAnimation(.easeOut(duration: 0.22)) {
+            swipeOffset = -max(rowWidth + 60, 400)
+        } completion: {
+            onDelete()
+        }
+    }
+
+    private func snapToRest(direction: CGFloat) {
+        let side: SwipeRestSide = direction > 0 ? .leading : .trailing
+        let target = direction * revealWidth
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+            swipeOffset = target
+        }
+        swipeRest = side
+        swipeBase = target
+        hasCommittedHaptic = false
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+    }
+
+    private func closeReveal() {
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+            swipeOffset = 0
+        }
+        swipeRest = nil
+        swipeBase = 0
         hasCommittedHaptic = false
     }
 
@@ -610,6 +684,8 @@ struct TodoRowView: View {
 
     private func resetTransientRowState() {
         swipeOffset = 0
+        swipeBase = 0
+        swipeRest = nil
         hasCommittedHaptic = false
         isHovering = false
     }
