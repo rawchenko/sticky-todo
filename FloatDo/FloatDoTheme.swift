@@ -3,8 +3,8 @@ import AppKit
 
 enum PanelMetrics {
     static let expandedSize = CGSize(width: 360, height: 580)
-    static let collapsedSize = CGSize(width: 46, height: 108)
-    static let cornerRadius: CGFloat = 32
+    static let collapsedSize = CGSize(width: 48, height: 48)
+    static let cornerRadius: CGFloat = 24
     static let shadowRadius: CGFloat = 24
     static let edgeInset: CGFloat = 8
 }

@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 class KeyablePanel: NSPanel {
     override var canBecomeKey: Bool { true }
@@ -120,8 +121,13 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     @Published var currentAnchor = EdgeAnchor(edge: .right, vertical: .top, anchorY: 0)
     @Published var isDragging = false
 
-    private let expandedSize = NSSize(width: PanelMetrics.expandedSize.width, height: PanelMetrics.expandedSize.height)
-    private let collapsedSize = NSSize(width: PanelMetrics.collapsedSize.width, height: PanelMetrics.collapsedSize.height)
+    private var expandedSize: NSSize {
+        NSSize(width: LayoutTweaks.shared.expandedWidth, height: LayoutTweaks.shared.expandedHeight)
+    }
+    private var collapsedSize: NSSize {
+        NSSize(width: LayoutTweaks.shared.collapsedWidth, height: LayoutTweaks.shared.collapsedHeight)
+    }
+    private var tweakCancellable: AnyCancellable?
     private var isProgrammaticMove = false
     private var pendingSnapWorkItem: DispatchWorkItem?
     private var pendingHoverWorkItem: DispatchWorkItem?
@@ -168,6 +174,13 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
         self.panel = panel
         self.ghostPanel = makeGhostPanel()
         restoreOrSetDefaultAnchor()
+
+        tweakCancellable = LayoutTweaks.shared.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.positionAtAnchor(self.currentAnchor, animated: true)
+            }
     }
 
     private func makeGhostPanel() -> NSPanel {
@@ -359,7 +372,7 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     private func frame(for anchor: EdgeAnchor, on screen: NSScreen, size overrideSize: NSSize? = nil) -> NSRect {
         let visible = screen.visibleFrame
         let size = overrideSize ?? resolvedSize(for: visible)
-        let inset = PanelMetrics.edgeInset
+        let inset = LayoutTweaks.shared.edgeInset
 
         let rawMinY: CGFloat
         switch anchor.vertical {
@@ -393,8 +406,9 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     private func clampPanelMinY(_ minY: CGFloat, height: CGFloat, in visible: NSRect) -> CGFloat {
-        let lower = visible.minY
-        let upper = max(visible.minY, visible.maxY - height)
+        let inset = LayoutTweaks.shared.edgeInset
+        let lower = visible.minY + inset
+        let upper = max(lower, visible.maxY - height - inset)
         return min(max(minY, lower), upper)
     }
 
@@ -583,7 +597,7 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
 
 private struct GhostView: View {
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
         ZStack {
             shape.fill(Color.white.opacity(0.08))
             shape.strokeBorder(Color.white.opacity(0.55), lineWidth: 1.5)

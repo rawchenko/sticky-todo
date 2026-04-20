@@ -2,7 +2,7 @@ import SwiftUI
 
 struct MorphingDockedShape: Shape {
     var expansion: CGFloat
-    var handleRadius: CGFloat = 18
+    var handleRadius: CGFloat = 24
     var panelRadius: CGFloat = PanelMetrics.cornerRadius
 
     var animatableData: CGFloat {

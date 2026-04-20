@@ -8,11 +8,12 @@ private struct AddListButton: View {
 
     @State private var isHovering = false
     @State private var isPressed = false
+    @ObservedObject private var tweaks = LayoutTweaks.shared
 
     var body: some View {
         Button(action: action) {
             Image(systemName: "plus")
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: tweaks.addListIconSize, weight: .medium))
                 .foregroundStyle(FloatDoTheme.textSecondary)
                 .frame(width: 22, height: 18)
                 .contentShape(Rectangle())
@@ -34,9 +35,53 @@ private struct AddListButton: View {
     }
 }
 
+private struct SettingsButton: View {
+    @State private var isHovering = false
+    @State private var isPressed = false
+    @State private var spinCount = 0
+    @ObservedObject private var tweaks = LayoutTweaks.shared
+
+    var body: some View {
+        Button(action: openSettings) {
+            Image(systemName: "gearshape")
+                .font(.system(size: tweaks.addListIconSize + 1, weight: .medium))
+                .foregroundStyle(FloatDoTheme.textSecondary)
+                .symbolRenderingMode(.hierarchical)
+                .rotationEffect(.degrees(Double(spinCount) * 60))
+                .frame(width: 22, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .pointerCursor(.pointingHand)
+        .background(WindowDragBlocker())
+        .help("Settings")
+        .scaleEffect(isPressed ? 0.9 : 1.0)
+        .opacity(isHovering ? 1 : 0.72)
+        .animation(.easeOut(duration: 0.15), value: isHovering)
+        .animation(.spring(response: 0.55, dampingFraction: 0.62), value: spinCount)
+        .animation(.spring(response: 0.22, dampingFraction: 0.7), value: isPressed)
+        .onHover { hovering in
+            isHovering = hovering
+            if hovering {
+                spinCount += 1
+            } else {
+                isPressed = false
+            }
+        }
+        .onLongPressGesture(minimumDuration: .infinity, maximumDistance: 6, perform: {}) { pressing in
+            isPressed = pressing
+        }
+    }
+
+    private func openSettings() {
+        AppDelegate.shared?.openSettings()
+    }
+}
+
 struct ContentView: View {
     @ObservedObject var store: TodoStore
     @ObservedObject var panelManager: PanelManager
+    @ObservedObject private var tweaks = LayoutTweaks.shared
     @State private var newTaskTitle = ""
     @State private var dismissedRecoveryNoticeID: UUID?
     @State private var draggingID: UUID?
@@ -58,7 +103,8 @@ struct ContentView: View {
         GeometryReader { proxy in
             let shape = MorphingDockedShape(
                 expansion: expansionProgress,
-                panelRadius: PanelMetrics.cornerRadius
+                handleRadius: tweaks.handleCornerRadius,
+                panelRadius: tweaks.panelCornerRadius
             )
 
             ZStack(alignment: panelManager.currentAnchor.edge.alignment) {
@@ -128,7 +174,7 @@ struct ContentView: View {
         HStack(spacing: 6) {
             if store.lists.isEmpty {
                 Text("No lists yet")
-                    .font(.system(size: 13))
+                    .font(.system(size: tweaks.secondaryTextSize))
                     .foregroundStyle(FloatDoTheme.textSecondary)
                     .padding(.horizontal, 4)
                 Spacer(minLength: 0)
@@ -185,10 +231,11 @@ struct ContentView: View {
             }
 
             AddListButton(action: createList)
+            SettingsButton()
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 12)
-        .padding(.bottom, 10)
+        .padding(.horizontal, tweaks.contentHorizontalPadding)
+        .padding(.top, tweaks.contentTopPadding)
+        .padding(.bottom, tweaks.contentBottomPadding)
     }
 
     private func createList() {
@@ -241,7 +288,7 @@ struct ContentView: View {
                 .foregroundStyle(FloatDoTheme.textPrimary.opacity(0.95))
 
             Text(isInputFocused ? "Press ⏎ to add" : "Type a task below")
-                .font(.system(size: 14))
+                .font(.system(size: tweaks.bodyTextSize))
                 .foregroundStyle(FloatDoTheme.textSecondary)
         }
         .opacity(isInputFocused ? 0.42 : 0.7)
@@ -251,13 +298,13 @@ struct ContentView: View {
 
     private var taskList: some View {
         ScrollView {
-            LazyVStack(spacing: 0) {
+            LazyVStack(spacing: tweaks.rowSpacing) {
                 ForEach(sortedItems) { item in
                     taskRow(item)
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, tweaks.contentHorizontalPadding)
             .padding(.vertical, 4)
             .coordinateSpace(name: "list")
             .onPreferenceChange(RowHeightPreferenceKey.self) { heights in
@@ -310,7 +357,7 @@ struct ContentView: View {
                 axis: .vertical
             )
                 .textFieldStyle(.plain)
-                .font(.system(size: 14))
+                .font(.system(size: tweaks.bodyTextSize))
                 .foregroundStyle(FloatDoTheme.textPrimary)
                 .lineLimit(1...5)
                 .focused($isInputFocused)
@@ -325,11 +372,11 @@ struct ContentView: View {
             .pointerCursor(canSubmit ? .pointingHand : nil)
             .animation(.easeInOut(duration: 0.15), value: canSubmit)
         }
-        .padding(.leading, 18)
-        .padding(.trailing, 12)
-        .padding(.vertical, 8)
+        .padding(.leading, tweaks.inputLeadingPadding)
+        .padding(.trailing, tweaks.inputTrailingPadding)
+        .padding(.vertical, tweaks.inputVerticalPadding)
         .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous).fill(FloatDoTheme.inputFill)
+            RoundedRectangle(cornerRadius: tweaks.inputCornerRadius, style: .continuous).fill(FloatDoTheme.inputFill)
         )
         .padding(.horizontal, 6)
         .padding(.bottom, 6)
@@ -354,7 +401,7 @@ struct ContentView: View {
             .aspectRatio(contentMode: .fit)
             .frame(width: 18, height: 18)
             .foregroundStyle(FloatDoTheme.textPrimary)
-            .frame(width: PanelMetrics.collapsedSize.width, height: PanelMetrics.collapsedSize.height)
+            .frame(width: tweaks.collapsedWidth, height: tweaks.collapsedHeight)
             .opacity(collapsedOpacity)
             .scaleEffect(collapsedScale, anchor: panelManager.currentAnchor.edge.unitPoint)
             .offset(collapsedOffset)
