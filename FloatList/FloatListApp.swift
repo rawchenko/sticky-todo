@@ -80,7 +80,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupStatusBarItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem?.button {
-            let image = NSImage(named: "PanelGlyph")
+            let image = NSImage(named: "MenuBarGlyph")
             image?.isTemplate = true
             image?.size = NSSize(width: 14, height: 14)
             button.image = image

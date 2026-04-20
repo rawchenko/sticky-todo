@@ -778,7 +778,7 @@ struct ContentView: View {
     }
 
     private var collapsedGlyph: some View {
-        Image("PanelGlyph")
+        Image("CollapsedGlyph")
             .resizable()
             .aspectRatio(contentMode: .fit)
             .frame(width: tweaks.collapsedWidth, height: tweaks.collapsedHeight)

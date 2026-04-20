@@ -7,7 +7,7 @@
           "value" : "light"
         }
       ],
-      "filename" : "PanelGlyph.LightTheme.svg",
+      "filename" : "CollapsedGlyph.LightTheme.svg",
       "idiom" : "universal"
     },
     {
@@ -17,7 +17,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "PanelGlyph.DarkTheme.svg",
+      "filename" : "CollapsedGlyph.DarkTheme.svg",
       "idiom" : "universal"
     }
   ],
