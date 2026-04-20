@@ -630,6 +630,119 @@ final class TodoStoreTests: XCTestCase {
         XCTAssertTrue(store.items.allSatisfy { $0.listID == listID })
     }
 
+    // MARK: - Undo
+
+    func testUndoStartsDisabledAndBecomesEnabledAfterMutation() throws {
+        let store = TodoStore(fileURL: try makeStoreFileURL())
+        XCTAssertFalse(store.canUndo)
+
+        store.addList(name: "Work")
+        XCTAssertTrue(store.canUndo)
+    }
+
+    func testUndoRevertsAddItem() throws {
+        let store = TodoStore(fileURL: try makeStoreFileURL())
+        let list = store.addList(name: "Work")
+        store.selectList(list.id)
+        store.add(title: "Ship it")
+
+        XCTAssertEqual(store.items.map(\.title), ["Ship it"])
+
+        store.undo()
+        XCTAssertTrue(store.items.isEmpty)
+        XCTAssertTrue(store.canUndo) // addList snapshot still on stack
+
+        store.undo()
+        XCTAssertTrue(store.lists.isEmpty)
+        XCTAssertFalse(store.canUndo)
+    }
+
+    func testUndoRevertsRenameRestoresOriginalTitle() throws {
+        let store = TodoStore(fileURL: try makeStoreFileURL())
+        let list = store.addList(name: "Work")
+        store.selectList(list.id)
+        store.add(title: "Draft")
+        let item = try XCTUnwrap(store.items.first)
+
+        store.rename(item, to: "Final")
+        XCTAssertEqual(store.items.first?.title, "Final")
+
+        store.undo()
+        XCTAssertEqual(store.items.first?.title, "Draft")
+    }
+
+    func testUndoRevertsMoveToTrash() throws {
+        let store = TodoStore(fileURL: try makeStoreFileURL())
+        let list = store.addList(name: "Work")
+        store.selectList(list.id)
+        store.add(title: "Temp")
+        let item = try XCTUnwrap(store.items.first)
+
+        store.moveToTrash(item)
+        XCTAssertTrue(store.items.first?.isTrashed ?? false)
+
+        store.undo()
+        XCTAssertFalse(store.items.first?.isTrashed ?? true)
+        XCTAssertEqual(store.items.first?.listID, list.id)
+    }
+
+    func testUndoRevertsDeleteListAndRestoresTrashedItems() throws {
+        let store = TodoStore(fileURL: try makeStoreFileURL())
+        let list = store.addList(name: "Work")
+        store.selectList(list.id)
+        store.add(title: "A")
+        store.add(title: "B")
+
+        store.deleteList(list)
+        XCTAssertTrue(store.lists.isEmpty)
+        XCTAssertTrue(store.items.allSatisfy(\.isTrashed))
+
+        store.undo()
+        XCTAssertEqual(store.lists.map(\.name), ["Work"])
+        XCTAssertFalse(store.items.contains(where: \.isTrashed))
+        XCTAssertEqual(store.items.map(\.title).sorted(), ["A", "B"])
+    }
+
+    func testUndoStackIsCappedAtFiftyEntries() throws {
+        let store = TodoStore(fileURL: try makeStoreFileURL())
+        let list = store.addList(name: "Work")
+        store.selectList(list.id)
+
+        for i in 0..<60 {
+            store.add(title: "Task \(i)")
+        }
+
+        var undoCount = 0
+        while store.canUndo {
+            store.undo()
+            undoCount += 1
+            if undoCount > 60 { break }
+        }
+
+        // 50-cap: earliest snapshots (including addList + first 9 adds) were evicted.
+        XCTAssertEqual(undoCount, 50)
+        XCTAssertFalse(store.canUndo)
+        // 10 earliest tasks remain because their pre-mutation snapshots fell off the stack.
+        XCTAssertEqual(store.items.count, 10)
+    }
+
+    func testSelectListDoesNotPolluteUndoStack() throws {
+        let store = TodoStore(fileURL: try makeStoreFileURL())
+        let a = store.addList(name: "A")
+        let b = store.addList(name: "B")
+        store.selectList(a.id)
+        store.selectList(b.id)
+        store.selectList(a.id)
+
+        // addList snapshots pushed; selectList did not.
+        // Undoing once should pop the most recent addList snapshot.
+        store.undo()
+        XCTAssertEqual(store.lists.map(\.name), ["A"])
+        store.undo()
+        XCTAssertTrue(store.lists.isEmpty)
+        XCTAssertFalse(store.canUndo)
+    }
+
     private func makeStoreFileURL() throws -> URL {
         let directoryURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("FloatDoTests-\(UUID().uuidString)", isDirectory: true)

@@ -22,6 +22,16 @@ class TodoStore: ObservableObject {
     @Published var lists: [TodoList] = []
     @Published var selectedListID: UUID?
     @Published var recoveryNotice: TodoStoreRecoveryNotice?
+    @Published private(set) var canUndo: Bool = false
+
+    private struct UndoSnapshot {
+        let items: [TodoItem]
+        let lists: [TodoList]
+        let selectedListID: UUID?
+    }
+
+    private var undoStack: [UndoSnapshot] = []
+    private let undoStackLimit = 50
 
     private let fileURL: URL
     private let fileManager: FileManager
@@ -126,6 +136,26 @@ class TodoStore: ObservableObject {
         try? data.write(to: fileURL, options: .atomic)
     }
 
+    // MARK: - Undo
+
+    private func captureUndoSnapshot() {
+        undoStack.append(UndoSnapshot(items: items, lists: lists, selectedListID: selectedListID))
+        if undoStack.count > undoStackLimit {
+            undoStack.removeFirst(undoStack.count - undoStackLimit)
+        }
+        if !canUndo { canUndo = true }
+    }
+
+    func undo() {
+        guard let snapshot = undoStack.popLast() else { return }
+        items = snapshot.items
+        lists = snapshot.lists
+        selectedListID = snapshot.selectedListID
+        let stillHasHistory = !undoStack.isEmpty
+        if canUndo != stillHasHistory { canUndo = stillHasHistory }
+        save()
+    }
+
     // MARK: - Todos
 
     func add(title: String) {
@@ -133,6 +163,7 @@ class TodoStore: ObservableObject {
         guard !trimmed.isEmpty else { return }
         guard let listID = selectedListID else { return }
         guard !isSpecialListID(listID) else { return }
+        captureUndoSnapshot()
         items.append(TodoItem(title: trimmed, listID: listID))
         save()
     }
@@ -142,6 +173,7 @@ class TodoStore: ObservableObject {
         guard !trimmed.isEmpty else { return }
         guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
         guard items[idx].title != trimmed else { return }
+        captureUndoSnapshot()
         items[idx].title = trimmed
         save()
     }
@@ -150,6 +182,7 @@ class TodoStore: ObservableObject {
         guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
         guard let listID = items[idx].listID, !isSpecialListID(listID) else { return }
 
+        captureUndoSnapshot()
         var updated = items.remove(at: idx)
         updated.isCompleted.toggle()
 
@@ -168,6 +201,7 @@ class TodoStore: ObservableObject {
 
     func moveToTrash(_ item: TodoItem) {
         guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
+        captureUndoSnapshot()
         moveItemToTrash(at: idx)
         save()
     }
@@ -176,6 +210,7 @@ class TodoStore: ObservableObject {
         guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
         guard items[idx].isTrashed else { return }
 
+        captureUndoSnapshot()
         let priorSelection = selectedListID
         let targetListID: UUID
         if let originalListID = items[idx].trashedOriginalListID,
@@ -196,6 +231,8 @@ class TodoStore: ObservableObject {
     }
 
     func permanentlyDelete(_ item: TodoItem) {
+        guard items.contains(where: { $0.id == item.id }) else { return }
+        captureUndoSnapshot()
         items.removeAll { $0.id == item.id }
         if selectedListID == TodoList.trashID && lists.isEmpty && !hasTrashedItems {
             selectedListID = nil
@@ -204,6 +241,8 @@ class TodoStore: ObservableObject {
     }
 
     func emptyTrash() {
+        guard hasTrashedItems else { return }
+        captureUndoSnapshot()
         items.removeAll(where: { $0.isTrashed })
         if selectedListID == TodoList.trashID && lists.isEmpty {
             selectedListID = nil
@@ -234,6 +273,7 @@ class TodoStore: ObservableObject {
         let listItems = activeItems(in: listID)
         guard listItems.indices.contains(from), from != to else { return }
 
+        captureUndoSnapshot()
         let moving = listItems[from]
         items.removeAll { $0.id == moving.id }
 
@@ -263,6 +303,7 @@ class TodoStore: ObservableObject {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let finalName = trimmed.isEmpty ? TodoList.defaultName : trimmed
         let list = TodoList(name: finalName, icon: TodoList.sanitize(icon))
+        captureUndoSnapshot()
         lists.append(list)
         selectedListID = list.id
         save()
@@ -274,6 +315,7 @@ class TodoStore: ObservableObject {
         guard !trimmed.isEmpty else { return }
         guard let idx = lists.firstIndex(where: { $0.id == list.id }) else { return }
         guard lists[idx].name != trimmed else { return }
+        captureUndoSnapshot()
         lists[idx].name = trimmed
         save()
     }
@@ -285,6 +327,7 @@ class TodoStore: ObservableObject {
         else { return }
         guard let idx = lists.firstIndex(where: { $0.id == list.id }) else { return }
         guard lists[idx].icon != trimmed else { return }
+        captureUndoSnapshot()
         lists[idx].icon = trimmed
         save()
     }
@@ -292,6 +335,7 @@ class TodoStore: ObservableObject {
     func deleteList(_ list: TodoList) {
         guard !isSpecialListID(list.id) else { return }
         guard let idx = lists.firstIndex(where: { $0.id == list.id }) else { return }
+        captureUndoSnapshot()
         for itemIndex in items.indices where items[itemIndex].listID == list.id {
             moveItemToTrash(at: itemIndex, originalList: list)
         }
@@ -306,6 +350,7 @@ class TodoStore: ObservableObject {
         guard lists.indices.contains(from),
               to >= 0, to < lists.count,
               from != to else { return }
+        captureUndoSnapshot()
         let list = lists.remove(at: from)
         lists.insert(list, at: to)
         save()

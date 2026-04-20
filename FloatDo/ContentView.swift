@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 
 private let escapeKeyCode: UInt16 = 53
+private let undoKeyCode: UInt16 = 6   // kVK_ANSI_Z
 
 private struct AddListButton: View {
     var action: () -> Void
@@ -35,10 +36,14 @@ private struct AddListButton: View {
     }
 }
 
-private struct SettingsButton: View {
+private struct PillIconButton<Icon: View>: View {
+    var help: String
+    var action: () -> Void
+    var onHoverStart: () -> Void = {}
+    @ViewBuilder var icon: () -> Icon
+
     @State private var isHovering = false
     @State private var isPressed = false
-    @State private var spinCount = 0
     @ObservedObject private var tweaks = LayoutTweaks.shared
 
     private var pillContentHeight: CGFloat {
@@ -51,12 +56,8 @@ private struct SettingsButton: View {
     }
 
     var body: some View {
-        Button(action: openSettings) {
-            Image(systemName: "gearshape")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(FloatDoTheme.textPrimary)
-                .symbolRenderingMode(.hierarchical)
-                .rotationEffect(.degrees(Double(spinCount) * 60))
+        Button(action: action) {
+            icon()
                 .frame(width: pillContentHeight, height: pillContentHeight)
                 .padding(.horizontal, tweaks.pillHorizontalPadding)
                 .padding(.vertical, tweaks.pillVerticalPadding)
@@ -70,22 +71,55 @@ private struct SettingsButton: View {
         .buttonStyle(.plain)
         .pointerCursor(.pointingHand)
         .background(WindowDragBlocker())
-        .help("Settings")
+        .help(help)
         .scaleEffect(isPressed ? 0.9 : 1.0)
         .opacity(isHovering ? 1 : 0.72)
         .animation(.easeOut(duration: 0.15), value: isHovering)
-        .animation(.spring(response: 0.55, dampingFraction: 0.62), value: spinCount)
         .animation(.spring(response: 0.22, dampingFraction: 0.7), value: isPressed)
         .onHover { hovering in
             isHovering = hovering
             if hovering {
-                spinCount += 1
+                onHoverStart()
             } else {
                 isPressed = false
             }
         }
         .onLongPressGesture(minimumDuration: .infinity, maximumDistance: 6, perform: {}) { pressing in
             isPressed = pressing
+        }
+    }
+}
+
+private struct UndoButton: View {
+    var undoTick: Int
+    var action: () -> Void
+
+    var body: some View {
+        PillIconButton(help: "Undo (\u{2318}Z)", action: action) {
+            Image(systemName: "arrow.uturn.backward")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(FloatDoTheme.textPrimary)
+                .symbolRenderingMode(.hierarchical)
+                .symbolEffect(.bounce, value: undoTick)
+        }
+    }
+}
+
+private struct SettingsButton: View {
+    @State private var spinCount = 0
+
+    var body: some View {
+        PillIconButton(
+            help: "Settings",
+            action: openSettings,
+            onHoverStart: { spinCount += 1 }
+        ) {
+            Image(systemName: "gearshape")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(FloatDoTheme.textPrimary)
+                .symbolRenderingMode(.hierarchical)
+                .rotationEffect(.degrees(Double(spinCount) * 60))
+                .animation(.spring(response: 0.55, dampingFraction: 0.62), value: spinCount)
         }
     }
 
@@ -105,6 +139,8 @@ struct ContentView: View {
     @State private var rowHeights: [UUID: CGFloat] = [:]
     @State private var lastTargetIndex: Int?
     @State private var escapeMonitor: Any?
+    @State private var undoMonitor: Any?
+    @State private var undoTick: Int = 0
     @State private var pendingAutoFocusListID: UUID?
     @State private var listPendingDeletion: TodoList?
     @State private var isShowingEmptyTrashAlert = false
@@ -147,8 +183,12 @@ struct ContentView: View {
         .animation(PanelMotion.stateAnimation, value: panelManager.isCollapsed)
         .animation(PanelMotion.stateAnimation, value: panelManager.currentAnchor)
         .animation(PanelMotion.stateAnimation, value: panelManager.isDragging)
+        .onAppear {
+            installUndoMonitor()
+        }
         .onDisappear {
             removeEscapeMonitor()
+            removeUndoMonitor()
             releaseDeletePromptHoldIfNeeded()
         }
         .alert(
@@ -254,39 +294,61 @@ struct ContentView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 6) {
-            if shouldShowNoListsEmptyState {
-                Text("No lists yet")
-                    .font(.system(size: tweaks.secondaryTextSize))
-                    .foregroundStyle(FloatDoTheme.textSecondary)
-                    .padding(.horizontal, 4)
-                Spacer(minLength: 0)
-                AddListButton(action: createList)
-            } else {
-                ListsDropdownView(
-                    lists: store.lists,
-                    completedList: TodoList.completedList,
-                    trashList: TodoList.trashList,
-                    selectedID: store.selectedListID,
-                    autoFocusRenameID: pendingAutoFocusListID,
-                    onSelect: { selectList($0) },
-                    onCreate: createList,
-                    onRename: { list, name in store.renameList(list, to: name) },
-                    onDelete: { deleteList($0) },
-                    onEmptyTrash: { emptyTrash() },
-                    onSetIcon: { list, symbol in store.setListIcon(list, to: symbol) },
-                    onAutoFocusConsumed: { pendingAutoFocusListID = nil }
-                )
-                Spacer(minLength: 0)
+        HStack(alignment: .top, spacing: 2) {
+            Group {
+                if shouldShowNoListsEmptyState {
+                    HStack(alignment: .top, spacing: 6) {
+                        Text("No lists yet")
+                            .font(.system(size: tweaks.secondaryTextSize))
+                            .foregroundStyle(FloatDoTheme.textSecondary)
+                            .padding(.horizontal, 4)
+                        Spacer(minLength: 0)
+                        AddListButton(action: createList)
+                    }
+                } else {
+                    ListsDropdownView(
+                        lists: store.lists,
+                        completedList: TodoList.completedList,
+                        trashList: TodoList.trashList,
+                        selectedID: store.selectedListID,
+                        autoFocusRenameID: pendingAutoFocusListID,
+                        onSelect: { selectList($0) },
+                        onCreate: createList,
+                        onRename: { list, name in store.renameList(list, to: name) },
+                        onDelete: { deleteList($0) },
+                        onEmptyTrash: { emptyTrash() },
+                        onSetIcon: { list, symbol in store.setListIcon(list, to: symbol) },
+                        onAutoFocusConsumed: { pendingAutoFocusListID = nil }
+                    )
+                }
             }
-            SettingsButton()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(alignment: .top, spacing: 2) {
+                if store.canUndo {
+                    UndoButton(undoTick: undoTick, action: performUndo)
+                        .transition(.asymmetric(
+                            insertion: .scale(scale: 0.85).combined(with: .opacity),
+                            removal: .scale(scale: 0.85).combined(with: .opacity)
+                        ))
+                }
+                SettingsButton()
+            }
         }
+        .animation(.spring(response: 0.4, dampingFraction: 0.82), value: store.canUndo)
         .padding(.horizontal, tweaks.contentHorizontalPadding)
         .padding(.top, tweaks.contentTopPadding)
         .padding(.bottom, tweaks.contentBottomPadding)
         .onChange(of: store.lists.map(\.id)) { _, ids in
             let live = Set(ids)
             expandedCompletedListIDs = Set(expandedCompletedListIDs.filter { live.contains($0) })
+        }
+    }
+
+    private func performUndo() {
+        guard store.canUndo else { return }
+        undoTick &+= 1
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.82)) {
+            store.undo()
         }
     }
 
@@ -808,6 +870,28 @@ struct ContentView: View {
                 return nil
             }
             return event
+        }
+    }
+
+    private func installUndoMonitor() {
+        if undoMonitor != nil { return }
+        undoMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
+            guard event.keyCode == undoKeyCode,
+                  event.modifierFlags.contains(.command),
+                  !event.modifierFlags.contains(.shift),
+                  !event.modifierFlags.contains(.option),
+                  !event.modifierFlags.contains(.control)
+            else { return event }
+            guard store.canUndo else { return event }
+            performUndo()
+            return nil
+        }
+    }
+
+    private func removeUndoMonitor() {
+        if let monitor = undoMonitor {
+            NSEvent.removeMonitor(monitor)
+            undoMonitor = nil
         }
     }
 
