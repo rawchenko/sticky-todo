@@ -111,15 +111,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             window = existing
         } else {
             window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 460, height: 520),
+                contentRect: NSRect(x: 0, y: 0, width: 520, height: 560),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable],
                 backing: .buffered,
                 defer: false
             )
-            window.title = "FloatList Settings"
+            window.title = "General"
             window.contentView = NSHostingView(rootView: SettingsView())
             window.isReleasedWhenClosed = false
-            window.minSize = NSSize(width: 420, height: 420)
+            window.minSize = NSSize(width: 480, height: 480)
             window.center()
 
             settingsWindow = window
