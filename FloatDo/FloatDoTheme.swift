@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import QuartzCore
 
 enum PanelMetrics {
     static let expandedSize = CGSize(width: 360, height: 580)
@@ -16,13 +17,26 @@ enum RowMetrics {
 }
 
 enum PanelMotion {
-    static let stateAnimation = Animation.spring(response: 0.44, dampingFraction: 0.88, blendDuration: 0.18)
-    static let frameAnimationDuration: TimeInterval = 0.42
+    /// iOS Dynamic Island morph spring.
+    static let stateAnimation = Animation.spring(response: 0.5, dampingFraction: 0.825, blendDuration: 0)
+    static let frameAnimationDuration: TimeInterval = 0.58
+    /// Soft-overshoot bezier that mirrors the Dynamic Island spring's tail
+    /// for the AppKit frame animation, which has no native spring support.
+    static let frameTiming = CAMediaTimingFunction(controlPoints: 0.28, 1.08, 0.42, 1.0)
     /// Grace period between the pointer leaving the expanded panel and the
     /// collapse firing. Forgives brief pointer slips — if the user returns
     /// within this window the panel stays open.
     static let hoverExitDelay: TimeInterval = 0.5
     static let transitionDistance: CGFloat = 12
+    static let expandedTransitionBlur: CGFloat = 16
+    static let collapsedTransitionBlur: CGFloat = 10
+}
+
+/// Classic Hermite smoothstep on [0, 1]. Input is clamped.
+@inline(__always)
+func smoothstep(_ t: CGFloat) -> CGFloat {
+    let c = max(0, min(1, t))
+    return c * c * (3 - 2 * c)
 }
 
 extension Color {

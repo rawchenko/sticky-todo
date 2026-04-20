@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 
 private let escapeKeyCode: UInt16 = 53
+private let undoKeyCode: UInt16 = 6   // kVK_ANSI_Z
 
 private struct AddListButton: View {
     var action: () -> Void
@@ -35,41 +36,90 @@ private struct AddListButton: View {
     }
 }
 
-private struct SettingsButton: View {
+private struct PillIconButton<Icon: View>: View {
+    var help: String
+    var action: () -> Void
+    var onHoverStart: () -> Void = {}
+    @ViewBuilder var icon: () -> Icon
+
     @State private var isHovering = false
     @State private var isPressed = false
-    @State private var spinCount = 0
     @ObservedObject private var tweaks = LayoutTweaks.shared
 
+    private var pillContentHeight: CGFloat {
+        let textLineHeight = NSFont.systemFont(ofSize: tweaks.bodyTextSize, weight: .medium)
+            .boundingRectForFont
+            .height
+            .rounded(.up)
+        let chevronSize = max(tweaks.secondaryTextSize - 2, 8)
+        return max(textLineHeight, tweaks.listIconSize, chevronSize)
+    }
+
     var body: some View {
-        Button(action: openSettings) {
-            Image(systemName: "gearshape")
-                .font(.system(size: tweaks.addListIconSize + 1, weight: .medium))
-                .foregroundStyle(FloatDoTheme.textSecondary)
-                .symbolRenderingMode(.hierarchical)
-                .rotationEffect(.degrees(Double(spinCount) * 60))
-                .frame(width: 22, height: 18)
-                .contentShape(Rectangle())
+        Button(action: action) {
+            icon()
+                .frame(width: pillContentHeight, height: pillContentHeight)
+                .padding(.horizontal, tweaks.pillHorizontalPadding)
+                .padding(.vertical, tweaks.pillVerticalPadding)
+                .background(
+                    RoundedRectangle(cornerRadius: tweaks.pillCornerRadius, style: .continuous)
+                        .fill(isHovering ? FloatDoTheme.rowHover : Color.clear)
+                        .animation(.easeOut(duration: 0.12), value: isHovering)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: tweaks.pillCornerRadius, style: .continuous))
         }
         .buttonStyle(.plain)
         .pointerCursor(.pointingHand)
         .background(WindowDragBlocker())
-        .help("Settings")
+        .help(help)
         .scaleEffect(isPressed ? 0.9 : 1.0)
         .opacity(isHovering ? 1 : 0.72)
         .animation(.easeOut(duration: 0.15), value: isHovering)
-        .animation(.spring(response: 0.55, dampingFraction: 0.62), value: spinCount)
         .animation(.spring(response: 0.22, dampingFraction: 0.7), value: isPressed)
         .onHover { hovering in
             isHovering = hovering
             if hovering {
-                spinCount += 1
+                onHoverStart()
             } else {
                 isPressed = false
             }
         }
         .onLongPressGesture(minimumDuration: .infinity, maximumDistance: 6, perform: {}) { pressing in
             isPressed = pressing
+        }
+    }
+}
+
+private struct UndoButton: View {
+    var undoTick: Int
+    var action: () -> Void
+
+    var body: some View {
+        PillIconButton(help: "Undo (\u{2318}Z)", action: action) {
+            Image(systemName: "arrow.uturn.backward")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(FloatDoTheme.textPrimary)
+                .symbolRenderingMode(.hierarchical)
+                .symbolEffect(.bounce, value: undoTick)
+        }
+    }
+}
+
+private struct SettingsButton: View {
+    @State private var spinCount = 0
+
+    var body: some View {
+        PillIconButton(
+            help: "Settings",
+            action: openSettings,
+            onHoverStart: { spinCount += 1 }
+        ) {
+            Image(systemName: "gearshape")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(FloatDoTheme.textPrimary)
+                .symbolRenderingMode(.hierarchical)
+                .rotationEffect(.degrees(Double(spinCount) * 60))
+                .animation(.spring(response: 0.55, dampingFraction: 0.62), value: spinCount)
         }
     }
 
@@ -89,9 +139,14 @@ struct ContentView: View {
     @State private var rowHeights: [UUID: CGFloat] = [:]
     @State private var lastTargetIndex: Int?
     @State private var escapeMonitor: Any?
+    @State private var undoMonitor: Any?
+    @State private var undoTick: Int = 0
     @State private var pendingAutoFocusListID: UUID?
     @State private var listPendingDeletion: TodoList?
+    @State private var isShowingEmptyTrashAlert = false
     @State private var isHoldingForDeletePrompt = false
+    @State private var expandedCompletedListIDs: Set<UUID> = []
+    @State private var hoveredCompletedToggleListID: UUID?
     @FocusState private var isInputFocused: Bool
 
     private static let reorderAnimation = Animation.spring(response: 0.35, dampingFraction: 0.78)
@@ -128,8 +183,12 @@ struct ContentView: View {
         .animation(PanelMotion.stateAnimation, value: panelManager.isCollapsed)
         .animation(PanelMotion.stateAnimation, value: panelManager.currentAnchor)
         .animation(PanelMotion.stateAnimation, value: panelManager.isDragging)
+        .onAppear {
+            installUndoMonitor()
+        }
         .onDisappear {
             removeEscapeMonitor()
+            removeUndoMonitor()
             releaseDeletePromptHoldIfNeeded()
         }
         .alert(
@@ -149,8 +208,21 @@ struct ContentView: View {
         } message: { list in
             Text(deleteAlertMessage(for: list))
         }
-        .onChange(of: listPendingDeletion == nil) { _, isNil in
-            setDeletePromptHold(!isNil)
+        .alert(
+            "Empty Trash?",
+            isPresented: $isShowingEmptyTrashAlert
+        ) {
+            Button("Empty Trash", role: .destructive) {
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.84)) {
+                    store.emptyTrash()
+                }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("All trashed items will be permanently deleted.")
+        }
+        .onChange(of: listPendingDeletion != nil || isShowingEmptyTrashAlert) { _, shouldHold in
+            setDeletePromptHold(shouldHold)
         }
     }
 
@@ -162,10 +234,10 @@ struct ContentView: View {
     private func deleteAlertMessage(for list: TodoList) -> String {
         let count = store.items(in: list.id).count
         if count == 0 {
-            return "This list will be permanently deleted."
+            return "This list will be deleted."
         }
         let taskWord = count == 1 ? "task" : "tasks"
-        return "This list and its \(count) \(taskWord) will be permanently deleted."
+        return "This list will be deleted and its \(count) \(taskWord) will move to Trash."
     }
 
     private func setDeletePromptHold(_ hold: Bool) {
@@ -187,6 +259,8 @@ struct ContentView: View {
 
     private var expandedLayer: some View {
         expandedContent
+            .compositingGroup()
+            .blur(radius: expandedBlur)
             .opacity(expandedOpacity)
             .scaleEffect(expandedScale, anchor: panelManager.currentAnchor.edge.unitPoint)
             .allowsHitTesting(expansionProgress > 0.72)
@@ -203,15 +277,17 @@ struct ContentView: View {
                     .padding(.bottom, 10)
             }
 
-            if store.lists.isEmpty {
+            if shouldShowNoListsEmptyState {
                 noListsEmptyState
-            } else if sortedItems.isEmpty {
-                emptyState
             } else {
-                taskList
+                if shouldShowTaskList {
+                    taskList
+                } else {
+                    currentEmptyState
+                }
             }
 
-            if store.selectedListID != nil {
+            if store.selectedListID != nil && !store.isSpecialListSelected {
                 inputBar
             }
         }
@@ -220,33 +296,62 @@ struct ContentView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 6) {
-            if store.lists.isEmpty {
-                Text("No lists yet")
-                    .font(.system(size: tweaks.secondaryTextSize))
-                    .foregroundStyle(FloatDoTheme.textSecondary)
-                    .padding(.horizontal, 4)
-                Spacer(minLength: 0)
-                AddListButton(action: createList)
-            } else {
-                ListsDropdownView(
-                    lists: store.lists,
-                    selectedID: store.selectedListID,
-                    autoFocusRenameID: pendingAutoFocusListID,
-                    onSelect: { selectList($0) },
-                    onCreate: createList,
-                    onRename: { list, name in store.renameList(list, to: name) },
-                    onDelete: { deleteList($0) },
-                    onSetIcon: { list, symbol in store.setListIcon(list, to: symbol) },
-                    onAutoFocusConsumed: { pendingAutoFocusListID = nil }
-                )
-                Spacer(minLength: 0)
+        HStack(alignment: .top, spacing: 2) {
+            Group {
+                if shouldShowNoListsEmptyState {
+                    HStack(alignment: .top, spacing: 6) {
+                        Text("No lists yet")
+                            .font(.system(size: tweaks.secondaryTextSize))
+                            .foregroundStyle(FloatDoTheme.textSecondary)
+                            .padding(.horizontal, 4)
+                        Spacer(minLength: 0)
+                        AddListButton(action: createList)
+                    }
+                } else {
+                    ListsDropdownView(
+                        lists: store.lists,
+                        completedList: TodoList.completedList,
+                        trashList: TodoList.trashList,
+                        selectedID: store.selectedListID,
+                        autoFocusRenameID: pendingAutoFocusListID,
+                        onSelect: { selectList($0) },
+                        onCreate: createList,
+                        onRename: { list, name in store.renameList(list, to: name) },
+                        onDelete: { deleteList($0) },
+                        onEmptyTrash: { emptyTrash() },
+                        onSetIcon: { list, symbol in store.setListIcon(list, to: symbol) },
+                        onAutoFocusConsumed: { pendingAutoFocusListID = nil }
+                    )
+                }
             }
-            SettingsButton()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(alignment: .top, spacing: 2) {
+                if store.canUndo {
+                    UndoButton(undoTick: undoTick, action: performUndo)
+                        .transition(.asymmetric(
+                            insertion: .scale(scale: 0.85).combined(with: .opacity),
+                            removal: .scale(scale: 0.85).combined(with: .opacity)
+                        ))
+                }
+                SettingsButton()
+            }
         }
+        .animation(.spring(response: 0.4, dampingFraction: 0.82), value: store.canUndo)
         .padding(.horizontal, tweaks.contentHorizontalPadding)
         .padding(.top, tweaks.contentTopPadding)
         .padding(.bottom, tweaks.contentBottomPadding)
+        .onChange(of: store.lists.map(\.id)) { _, ids in
+            let live = Set(ids)
+            expandedCompletedListIDs = Set(expandedCompletedListIDs.filter { live.contains($0) })
+        }
+    }
+
+    private func performUndo() {
+        guard store.canUndo else { return }
+        undoTick &+= 1
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.82)) {
+            store.undo()
+        }
     }
 
     private func createList() {
@@ -265,6 +370,10 @@ struct ContentView: View {
         withAnimation(.spring(response: 0.38, dampingFraction: 0.84)) {
             store.deleteList(list)
         }
+    }
+
+    private func emptyTrash() {
+        isShowingEmptyTrashAlert = true
     }
 
     private func selectList(_ id: UUID) {
@@ -305,12 +414,81 @@ struct ContentView: View {
         .animation(.easeInOut(duration: 0.2), value: isInputFocused)
     }
 
+    private var trashEmptyState: some View {
+        VStack(spacing: 8) {
+            Text("Trash is empty.")
+                .font(.system(size: 26, weight: .regular, design: .serif).italic())
+                .tracking(-0.48)
+                .foregroundStyle(FloatDoTheme.textPrimary.opacity(0.95))
+
+            Text("Deleted tasks will wait here until you restore them or empty Trash.")
+                .font(.system(size: tweaks.bodyTextSize))
+                .foregroundStyle(FloatDoTheme.textSecondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var completedEmptyState: some View {
+        VStack(spacing: 8) {
+            Text("Completed is clear.")
+                .font(.system(size: 26, weight: .regular, design: .serif).italic())
+                .tracking(-0.48)
+                .foregroundStyle(FloatDoTheme.textPrimary.opacity(0.95))
+
+            Text("Finished tasks from every list will collect here.")
+                .font(.system(size: tweaks.bodyTextSize))
+                .foregroundStyle(FloatDoTheme.textSecondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private var currentEmptyState: some View {
+        if store.isTrashSelected {
+            trashEmptyState
+        } else if store.isCompletedSelected {
+            completedEmptyState
+        } else {
+            emptyState
+        }
+    }
+
     private var taskList: some View {
         ScrollView {
             LazyVStack(spacing: tweaks.rowSpacing) {
-                ForEach(sortedItems) { item in
-                    taskRow(item)
+                if let listID = selectedRegularListID {
+                    if sortedItems.isEmpty && !currentCompletedItems.isEmpty {
+                        inlineEmptyState
+                    }
+
+                    ForEach(sortedItems) { item in
+                        taskRow(item)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+
+                    if !currentCompletedItems.isEmpty {
+                        completedToggleButton(for: listID, count: currentCompletedItems.count)
+
+                        if isCompletedExpanded(for: listID) {
+                            ForEach(currentCompletedItems) { item in
+                                taskRow(item, isReorderEnabled: false)
+                                    .transition(.opacity.combined(with: .move(edge: .top)))
+                            }
+                        }
+                    }
+                } else {
+                    ForEach(sortedItems) { item in
+                        taskRow(
+                            item,
+                            subtitle: store.isSpecialListSelected ? store.sourceListName(for: item) : nil,
+                            isReorderEnabled: false
+                        )
                         .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
                 }
             }
             .padding(.horizontal, tweaks.contentHorizontalPadding)
@@ -330,12 +508,19 @@ struct ContentView: View {
         .frame(maxHeight: .infinity)
     }
 
-    private func taskRow(_ item: TodoItem) -> some View {
-        TodoRowView(
+    private func taskRow(
+        _ item: TodoItem,
+        subtitle: String? = nil,
+        isReorderEnabled: Bool? = nil
+    ) -> some View {
+        let isTrashItem = store.isTrashSelected
+        return TodoRowView(
             item: item,
+            isTrashItem: isTrashItem,
             isDragging: draggingID == item.id,
             isDragActive: draggingID != nil,
             yOffset: offset(for: item.id),
+            subtitle: subtitle,
             onToggle: {
                 withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
                     store.toggle(item)
@@ -343,9 +528,18 @@ struct ContentView: View {
             },
             onDelete: {
                 withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-                    store.delete(item)
+                    if store.isTrashSelected {
+                        store.permanentlyDelete(item)
+                    } else {
+                        store.moveToTrash(item)
+                    }
                 }
             },
+            onRestore: store.isTrashSelected ? {
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                    store.restore(item)
+                }
+            } : nil,
             onRename: { newTitle in
                 store.rename(item, to: newTitle)
             },
@@ -354,8 +548,17 @@ struct ContentView: View {
             },
             onDragEnded: { translation in
                 commitDrag(for: item.id, translation: translation)
-            }
+            },
+            isToggleEnabled: !isTrashItem,
+            isReorderEnabled: isReorderEnabled ?? !store.isSpecialListSelected
         )
+        .id(RowRenderIdentity(
+            itemID: item.id,
+            selectedListID: store.selectedListID,
+            isCompleted: item.isCompleted,
+            isTrashItem: isTrashItem,
+            subtitle: subtitle
+        ))
     }
 
     private var inputBar: some View {
@@ -411,6 +614,8 @@ struct ContentView: View {
             .frame(width: 18, height: 18)
             .foregroundStyle(FloatDoTheme.textPrimary)
             .frame(width: tweaks.collapsedWidth, height: tweaks.collapsedHeight)
+            .compositingGroup()
+            .blur(radius: collapsedBlur)
             .opacity(collapsedOpacity)
             .scaleEffect(collapsedScale, anchor: panelManager.currentAnchor.edge.unitPoint)
             .offset(collapsedOffset)
@@ -423,21 +628,22 @@ struct ContentView: View {
     }
 
     private var expandedOpacity: CGFloat {
-        let adjusted = max(0, (expansionProgress - 0.18) / 0.82)
-        return adjusted * adjusted
+        smoothstep((expansionProgress - 0.10) / 0.82)
     }
 
     private var expandedScale: CGFloat {
-        0.975 + (0.025 * expansionProgress)
+        0.94 + (0.06 * expansionProgress)
     }
 
     private var collapsedOpacity: CGFloat {
-        let inverse = 1 - expansionProgress
-        return min(1, inverse * 1.3)
+        // Fade runs ahead of `expansionProgress` (x1.55) so the glyph clears
+        // the frame before the expanded layer reaches full opacity, letting
+        // the two cross through the blurred midpoint instead of stacking.
+        smoothstep((1 - expansionProgress) * 1.55)
     }
 
     private var collapsedScale: CGFloat {
-        1 - (0.1 * expansionProgress)
+        1 - (0.18 * expansionProgress)
     }
 
     private var collapsedOffset: CGSize {
@@ -447,12 +653,121 @@ struct ContentView: View {
         )
     }
 
+    private var expandedBlur: CGFloat {
+        let remaining = 1 - expansionProgress
+        return remaining * remaining * PanelMotion.expandedTransitionBlur
+    }
+
+    private var collapsedBlur: CGFloat {
+        expansionProgress * expansionProgress * PanelMotion.collapsedTransitionBlur
+    }
+
     private var transitionOffset: CGSize {
         panelManager.currentAnchor.edge.transitionOffset
     }
 
     private var sortedItems: [TodoItem] {
         store.visibleItems
+    }
+
+    private var shouldShowNoListsEmptyState: Bool {
+        store.lists.isEmpty && !store.isSpecialListSelected && !store.hasCompletedItems && !store.hasTrashedItems
+    }
+
+    private var selectedRegularListID: UUID? {
+        guard let id = store.selectedListID, !store.isSpecialListSelected else { return nil }
+        return id
+    }
+
+    private var currentCompletedItems: [TodoItem] {
+        guard let listID = selectedRegularListID else { return [] }
+        return store.completedItems(in: listID)
+    }
+
+    private var shouldShowTaskList: Bool {
+        if store.isSpecialListSelected {
+            return !sortedItems.isEmpty
+        }
+        return !sortedItems.isEmpty || !currentCompletedItems.isEmpty
+    }
+
+    private var inlineEmptyState: some View {
+        VStack(spacing: 8) {
+            Text("Start anywhere.")
+                .font(.system(size: 24, weight: .regular, design: .serif).italic())
+                .tracking(-0.48)
+                .foregroundStyle(FloatDoTheme.textPrimary.opacity(0.95))
+
+            Text(isInputFocused ? "Press ⏎ to add" : "Type a task below")
+                .font(.system(size: tweaks.bodyTextSize))
+                .foregroundStyle(FloatDoTheme.textSecondary)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 18)
+        .frame(maxWidth: .infinity)
+        .opacity(isInputFocused ? 0.42 : 0.7)
+        .animation(.easeInOut(duration: 0.2), value: isInputFocused)
+    }
+
+    private func completedToggleButton(for listID: UUID, count: Int) -> some View {
+        let expanded = isCompletedExpanded(for: listID)
+        let isHovering = hoveredCompletedToggleListID == listID
+
+        return Button {
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                toggleCompletedSection(for: listID)
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(completedButtonTitle(count: count, expanded: expanded))
+                    .font(.system(size: tweaks.secondaryTextSize, weight: .medium))
+                    .foregroundStyle(FloatDoTheme.textSecondary)
+
+                Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: max(tweaks.secondaryTextSize - 3, 8), weight: .semibold))
+                    .foregroundStyle(FloatDoTheme.textSecondary)
+            }
+            .padding(.horizontal, tweaks.rowHorizontalPadding)
+            .padding(.vertical, max(6, tweaks.rowVerticalPadding))
+            .frame(alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous)
+                    .fill((expanded || isHovering) ? FloatDoTheme.controlFill : Color.clear)
+            )
+        }
+        .buttonStyle(.plain)
+        .background(WindowDragBlocker())
+        .pointerCursor(.pointingHand)
+        .onHover { hovering in
+            hoveredCompletedToggleListID = hovering ? listID : nil
+        }
+        .padding(.top, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func completedButtonTitle(count: Int, expanded: Bool) -> String {
+        let noun = count == 1 ? "completed item" : "completed items"
+        return expanded ? "Hide \(count) \(noun)" : "Show \(count) \(noun)"
+    }
+
+    private func isCompletedExpanded(for listID: UUID) -> Bool {
+        expandedCompletedListIDs.contains(listID)
+    }
+
+    private func toggleCompletedSection(for listID: UUID) {
+        if expandedCompletedListIDs.contains(listID) {
+            expandedCompletedListIDs.remove(listID)
+        } else {
+            expandedCompletedListIDs.insert(listID)
+        }
+    }
+
+    private struct RowRenderIdentity: Hashable {
+        let itemID: UUID
+        let selectedListID: UUID?
+        let isCompleted: Bool
+        let isTrashItem: Bool
+        let subtitle: String?
     }
 
     // MARK: - Drag
@@ -569,6 +884,28 @@ struct ContentView: View {
                 return nil
             }
             return event
+        }
+    }
+
+    private func installUndoMonitor() {
+        if undoMonitor != nil { return }
+        undoMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
+            guard event.keyCode == undoKeyCode,
+                  event.modifierFlags.contains(.command),
+                  !event.modifierFlags.contains(.shift),
+                  !event.modifierFlags.contains(.option),
+                  !event.modifierFlags.contains(.control)
+            else { return event }
+            guard store.canUndo else { return event }
+            performUndo()
+            return nil
+        }
+    }
+
+    private func removeUndoMonitor() {
+        if let monitor = undoMonitor {
+            NSEvent.removeMonitor(monitor)
+            undoMonitor = nil
         }
     }
 

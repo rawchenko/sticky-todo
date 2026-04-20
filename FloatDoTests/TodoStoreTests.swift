@@ -143,7 +143,65 @@ final class TodoStoreTests: XCTestCase {
         XCTAssertEqual(store.visibleItems.map(\.title), ["First"])
     }
 
-    func testDeleteListCascadesTodosAndReselectsAnotherList() throws {
+    func testCompletingTodoRemovesItFromRegularVisibleItemsAndShowsItInCompletedItems() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        let work = store.addList(name: "Work")
+        store.add(title: "First")
+        store.add(title: "Second")
+
+        let first = try XCTUnwrap(store.items.first)
+        store.toggle(first)
+
+        XCTAssertEqual(store.visibleItems.map(\.title), ["Second"])
+        XCTAssertEqual(store.completedItems(in: work.id).map(\.title), ["First"])
+        XCTAssertEqual(store.items(in: work.id).map(\.title), ["Second", "First"])
+    }
+
+    func testSelectingCompletedShowsCompletedItemsAcrossLists() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        _ = store.addList(name: "Work")
+        store.add(title: "Write spec")
+        store.add(title: "Ship fix")
+
+        let home = store.addList(name: "Home")
+        store.add(title: "Buy milk")
+
+        let workCompleted = store.items.first(where: { $0.title == "Ship fix" })!
+        let homeCompleted = store.items.first(where: { $0.title == "Buy milk" })!
+        store.toggle(workCompleted)
+        store.toggle(homeCompleted)
+
+        store.selectList(TodoList.completedID)
+
+        XCTAssertTrue(store.isCompletedSelected)
+        XCTAssertEqual(store.visibleItems.map(\.title), ["Ship fix", "Buy milk"])
+        XCTAssertEqual(store.sourceListName(for: store.visibleItems[0]), "Work")
+        XCTAssertEqual(store.sourceListName(for: store.visibleItems[1]), home.name)
+    }
+
+    func testDeleteTodoMovesItToTrashAndPreservesOriginalMetadata() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        let work = store.addList(name: "Work")
+        store.add(title: "First")
+
+        let item = try XCTUnwrap(store.items.first)
+        store.delete(item)
+
+        XCTAssertEqual(store.items.count, 1)
+        XCTAssertTrue(try XCTUnwrap(store.items.first).isTrashed)
+        XCTAssertEqual(store.items.first?.trashedOriginalListID, work.id)
+        XCTAssertEqual(store.items.first?.trashedOriginalListName, "Work")
+        XCTAssertNotNil(store.items.first?.trashedAt)
+        XCTAssertTrue(store.visibleItems.isEmpty)
+
+        store.selectList(TodoList.trashID)
+        XCTAssertEqual(store.visibleItems.map(\.title), ["First"])
+    }
+
+    func testDeleteListMovesTodosToTrashAndReselectsAnotherList() throws {
         let fileURL = try makeStoreFileURL()
         let store = TodoStore(fileURL: fileURL)
 
@@ -158,11 +216,15 @@ final class TodoStoreTests: XCTestCase {
         store.deleteList(work)
 
         XCTAssertEqual(store.lists.map(\.name), ["Home"])
-        XCTAssertEqual(store.items.map(\.title), ["Home A"])
         XCTAssertEqual(store.selectedListID, home.id)
+        XCTAssertEqual(store.visibleItems.map(\.title), ["Home A"])
+
+        store.selectList(TodoList.trashID)
+        XCTAssertEqual(store.visibleItems.map(\.title), ["Work A", "Work B"])
+        XCTAssertEqual(store.visibleItems.map(\.trashedOriginalListName), ["Work", "Work"])
     }
 
-    func testDeleteLastListLeavesZeroListsAndNilSelection() throws {
+    func testDeleteLastListLeavesZeroRegularListsAndSelectsTrash() throws {
         let fileURL = try makeStoreFileURL()
         let store = TodoStore(fileURL: fileURL)
         let only = store.addList(name: "Tasks")
@@ -171,8 +233,27 @@ final class TodoStoreTests: XCTestCase {
         store.deleteList(only)
 
         XCTAssertTrue(store.lists.isEmpty)
-        XCTAssertTrue(store.items.isEmpty)
-        XCTAssertNil(store.selectedListID)
+        XCTAssertEqual(store.selectedListID, TodoList.trashID)
+        XCTAssertEqual(store.items.filter { $0.isTrashed }.map(\.title), ["Solo"])
+    }
+
+    func testMarkingCompletedItemIncompleteReturnsItToOriginalListVisibleItems() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        let work = store.addList(name: "Work")
+        store.add(title: "Recover me")
+
+        let item = try XCTUnwrap(store.items.first)
+        store.toggle(item)
+        store.selectList(TodoList.completedID)
+
+        let completed = try XCTUnwrap(store.visibleItems.first)
+        store.toggle(completed)
+
+        XCTAssertTrue(store.visibleItems.isEmpty)
+        store.selectList(work.id)
+        XCTAssertEqual(store.visibleItems.map(\.title), ["Recover me"])
+        XCTAssertTrue(store.completedItems(in: work.id).isEmpty)
     }
 
     func testRenameListUpdatesName() throws {
@@ -219,6 +300,228 @@ final class TodoStoreTests: XCTestCase {
         store.move(from: 0, to: 2)
 
         XCTAssertEqual(store.visibleItems.map(\.title), ["B", "C", "A"])
+    }
+
+    func testMoveTodoSkipsCompletedItemsAndKeepsCompletedTailStable() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+
+        let work = store.addList(name: "Work")
+        store.add(title: "A")
+        store.add(title: "B")
+        store.add(title: "C")
+
+        let completed = try XCTUnwrap(store.items.last)
+        store.toggle(completed)
+        store.move(from: 0, to: 1)
+
+        XCTAssertEqual(store.visibleItems.map(\.title), ["B", "A"])
+        XCTAssertEqual(store.completedItems(in: work.id).map(\.title), ["C"])
+        XCTAssertEqual(store.items(in: work.id).map(\.title), ["B", "A", "C"])
+    }
+
+    func testRestoreReturnsTodoToExistingOriginalList() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        let work = store.addList(name: "Work")
+        store.add(title: "Recover me")
+        let item = try XCTUnwrap(store.items.first)
+        store.moveToTrash(item)
+
+        store.selectList(TodoList.trashID)
+        let trashedItem = try XCTUnwrap(store.visibleItems.first)
+        store.restore(trashedItem)
+
+        XCTAssertEqual(store.selectedListID, TodoList.trashID)
+        XCTAssertEqual(store.items.first?.listID, work.id)
+        XCTAssertNil(store.items.first?.trashedAt)
+        XCTAssertNil(store.items.first?.trashedOriginalListID)
+        XCTAssertNil(store.items.first?.trashedOriginalListName)
+    }
+
+    func testDeletingCompletedTodoMovesItToTrashAndPreservesOriginalMetadata() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        let work = store.addList(name: "Work")
+        store.add(title: "Done already")
+
+        let item = try XCTUnwrap(store.items.first)
+        store.toggle(item)
+
+        let completed = try XCTUnwrap(store.completedItems(in: work.id).first)
+        store.delete(completed)
+
+        XCTAssertEqual(store.completedItems(in: work.id).count, 0)
+        XCTAssertEqual(store.items.filter(\.isTrashed).map(\.title), ["Done already"])
+        XCTAssertEqual(store.items.first?.trashedOriginalListID, work.id)
+        XCTAssertTrue(try XCTUnwrap(store.items.first).isCompleted)
+    }
+
+    func testRestoringCompletedTodoFromTrashKeepsItCompleted() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        let work = store.addList(name: "Work")
+        store.add(title: "Saved for later")
+
+        let item = try XCTUnwrap(store.items.first)
+        store.toggle(item)
+        store.moveToTrash(try XCTUnwrap(store.items.first))
+
+        store.selectList(TodoList.trashID)
+        let trashed = try XCTUnwrap(store.visibleItems.first)
+        store.restore(trashed)
+
+        XCTAssertEqual(store.selectedListID, TodoList.trashID)
+        XCTAssertEqual(store.items.first?.listID, work.id)
+        XCTAssertTrue(try XCTUnwrap(store.items.first).isCompleted)
+        XCTAssertEqual(store.completedItems(in: work.id).map(\.title), ["Saved for later"])
+    }
+
+    func testRestoreRecreatesOriginalListWhenItWasDeleted() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        let work = store.addList(name: "Work")
+        store.add(title: "Bring back")
+
+        store.deleteList(work)
+        store.selectList(TodoList.trashID)
+        let trashedItem = try XCTUnwrap(store.visibleItems.first)
+        store.restore(trashedItem)
+
+        XCTAssertEqual(store.lists.map(\.name), ["Work"])
+        XCTAssertEqual(store.items.first?.listID, store.lists.first?.id)
+        XCTAssertEqual(store.items.first?.title, "Bring back")
+    }
+
+    func testPermanentlyDeleteRemovesTrashedItemFromStorage() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        _ = store.addList(name: "Work")
+        store.add(title: "Trash me")
+        let item = try XCTUnwrap(store.items.first)
+        store.moveToTrash(item)
+
+        let trashedItem = try XCTUnwrap(store.items.first)
+        store.permanentlyDelete(trashedItem)
+
+        XCTAssertTrue(store.items.isEmpty)
+    }
+
+    func testEmptyTrashOnlyRemovesTrashedItems() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        _ = store.addList(name: "Work")
+        store.add(title: "Keep")
+        store.add(title: "Discard")
+
+        let discard = try XCTUnwrap(store.items.last)
+        store.moveToTrash(discard)
+        store.emptyTrash()
+
+        XCTAssertEqual(store.items.map(\.title), ["Keep"])
+        XCTAssertFalse(store.items.contains(where: \.isTrashed))
+    }
+
+    func testSchemaV3FileLoadsWithoutTrashMetadata() throws {
+        let fileURL = try makeStoreFileURL()
+        let list = TodoList(name: "Work")
+        let todo = TodoItem(title: "Legacy task", listID: list.id)
+        let payload = """
+        {
+          "schemaVersion": 3,
+          "lists": [{"id":"\(list.id.uuidString)","name":"Work","icon":"\(list.icon)","createdAt":\(list.createdAt.timeIntervalSinceReferenceDate)}],
+          "todos": [{"id":"\(todo.id.uuidString)","title":"Legacy task","isCompleted":false,"listID":"\(list.id.uuidString)","createdAt":\(todo.createdAt.timeIntervalSinceReferenceDate)}],
+          "selectedListID":"\(list.id.uuidString)"
+        }
+        """
+        try Data(payload.utf8).write(to: fileURL, options: .atomic)
+
+        let store = TodoStore(fileURL: fileURL)
+
+        XCTAssertEqual(store.visibleItems.map(\.title), ["Legacy task"])
+        XCTAssertNil(store.items.first?.trashedAt)
+        XCTAssertNil(store.items.first?.trashedOriginalListID)
+        XCTAssertNil(store.items.first?.trashedOriginalListName)
+    }
+
+    func testSchemaV4RoundTripsTrashMetadata() throws {
+        let fileURL = try makeStoreFileURL()
+        let trashed = TodoItem(
+            title: "Recovered later",
+            isCompleted: true,
+            listID: TodoList.trashID,
+            trashedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            trashedOriginalListID: UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"),
+            trashedOriginalListName: "Work"
+        )
+        let file = TodoStoreFile(
+            schemaVersion: TodoStore.currentSchemaVersion,
+            lists: [],
+            todos: [trashed],
+            selectedListID: TodoList.trashID
+        )
+        try JSONEncoder().encode(file).write(to: fileURL, options: .atomic)
+
+        let store = TodoStore(fileURL: fileURL)
+        let restoredFile = try JSONDecoder().decode(TodoStoreFile.self, from: Data(contentsOf: fileURL))
+
+        XCTAssertEqual(store.selectedListID, TodoList.trashID)
+        XCTAssertEqual(store.visibleItems.map(\.title), ["Recovered later"])
+        XCTAssertEqual(restoredFile.todos.first?.trashedOriginalListName, "Work")
+        XCTAssertEqual(restoredFile.todos.first?.trashedOriginalListID, trashed.trashedOriginalListID)
+        XCTAssertEqual(restoredFile.todos.first?.trashedAt, trashed.trashedAt)
+    }
+
+    func testSelectingTrashShowsOnlyTrashedItems() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        _ = store.addList(name: "Work")
+        store.add(title: "A")
+        store.add(title: "B")
+
+        let trashed = try XCTUnwrap(store.items.last)
+        store.moveToTrash(trashed)
+
+        store.selectList(TodoList.trashID)
+
+        XCTAssertEqual(store.visibleItems.map(\.title), ["B"])
+    }
+
+    func testCompletedViewExcludesTrashedCompletedItems() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+        _ = store.addList(name: "Work")
+        store.add(title: "Done")
+
+        let item = try XCTUnwrap(store.items.first)
+        store.toggle(item)
+        store.moveToTrash(try XCTUnwrap(store.items.first))
+
+        store.selectList(TodoList.completedID)
+        XCTAssertTrue(store.visibleItems.isEmpty)
+
+        store.selectList(TodoList.trashID)
+        XCTAssertEqual(store.visibleItems.map(\.title), ["Done"])
+    }
+
+    func testCompletedSelectionRoundTripsThroughSaveAndLoad() throws {
+        let fileURL = try makeStoreFileURL()
+        let list = TodoList(name: "Work")
+        let todo = TodoItem(title: "Finished", isCompleted: true, listID: list.id)
+        let file = TodoStoreFile(
+            schemaVersion: TodoStore.currentSchemaVersion,
+            lists: [list],
+            todos: [todo],
+            selectedListID: TodoList.completedID
+        )
+        try JSONEncoder().encode(file).write(to: fileURL, options: .atomic)
+
+        let store = TodoStore(fileURL: fileURL)
+        let restoredFile = try JSONDecoder().decode(TodoStoreFile.self, from: Data(contentsOf: fileURL))
+
+        XCTAssertEqual(store.selectedListID, TodoList.completedID)
+        XCTAssertEqual(store.visibleItems.map(\.title), ["Finished"])
+        XCTAssertEqual(restoredFile.selectedListID, TodoList.completedID)
     }
 
     func testDecodeListWithMissingIconUsesDefault() throws {
@@ -325,6 +628,119 @@ final class TodoStoreTests: XCTestCase {
 
         XCTAssertEqual(store.items.map(\.title), ["Parent", "Child"])
         XCTAssertTrue(store.items.allSatisfy { $0.listID == listID })
+    }
+
+    // MARK: - Undo
+
+    func testUndoStartsDisabledAndBecomesEnabledAfterMutation() throws {
+        let store = TodoStore(fileURL: try makeStoreFileURL())
+        XCTAssertFalse(store.canUndo)
+
+        store.addList(name: "Work")
+        XCTAssertTrue(store.canUndo)
+    }
+
+    func testUndoRevertsAddItem() throws {
+        let store = TodoStore(fileURL: try makeStoreFileURL())
+        let list = store.addList(name: "Work")
+        store.selectList(list.id)
+        store.add(title: "Ship it")
+
+        XCTAssertEqual(store.items.map(\.title), ["Ship it"])
+
+        store.undo()
+        XCTAssertTrue(store.items.isEmpty)
+        XCTAssertTrue(store.canUndo) // addList snapshot still on stack
+
+        store.undo()
+        XCTAssertTrue(store.lists.isEmpty)
+        XCTAssertFalse(store.canUndo)
+    }
+
+    func testUndoRevertsRenameRestoresOriginalTitle() throws {
+        let store = TodoStore(fileURL: try makeStoreFileURL())
+        let list = store.addList(name: "Work")
+        store.selectList(list.id)
+        store.add(title: "Draft")
+        let item = try XCTUnwrap(store.items.first)
+
+        store.rename(item, to: "Final")
+        XCTAssertEqual(store.items.first?.title, "Final")
+
+        store.undo()
+        XCTAssertEqual(store.items.first?.title, "Draft")
+    }
+
+    func testUndoRevertsMoveToTrash() throws {
+        let store = TodoStore(fileURL: try makeStoreFileURL())
+        let list = store.addList(name: "Work")
+        store.selectList(list.id)
+        store.add(title: "Temp")
+        let item = try XCTUnwrap(store.items.first)
+
+        store.moveToTrash(item)
+        XCTAssertTrue(store.items.first?.isTrashed ?? false)
+
+        store.undo()
+        XCTAssertFalse(store.items.first?.isTrashed ?? true)
+        XCTAssertEqual(store.items.first?.listID, list.id)
+    }
+
+    func testUndoRevertsDeleteListAndRestoresTrashedItems() throws {
+        let store = TodoStore(fileURL: try makeStoreFileURL())
+        let list = store.addList(name: "Work")
+        store.selectList(list.id)
+        store.add(title: "A")
+        store.add(title: "B")
+
+        store.deleteList(list)
+        XCTAssertTrue(store.lists.isEmpty)
+        XCTAssertTrue(store.items.allSatisfy(\.isTrashed))
+
+        store.undo()
+        XCTAssertEqual(store.lists.map(\.name), ["Work"])
+        XCTAssertFalse(store.items.contains(where: \.isTrashed))
+        XCTAssertEqual(store.items.map(\.title).sorted(), ["A", "B"])
+    }
+
+    func testUndoStackIsCappedAtFiftyEntries() throws {
+        let store = TodoStore(fileURL: try makeStoreFileURL())
+        let list = store.addList(name: "Work")
+        store.selectList(list.id)
+
+        for i in 0..<60 {
+            store.add(title: "Task \(i)")
+        }
+
+        var undoCount = 0
+        while store.canUndo {
+            store.undo()
+            undoCount += 1
+            if undoCount > 60 { break }
+        }
+
+        // 50-cap: earliest snapshots (including addList + first 9 adds) were evicted.
+        XCTAssertEqual(undoCount, 50)
+        XCTAssertFalse(store.canUndo)
+        // 10 earliest tasks remain because their pre-mutation snapshots fell off the stack.
+        XCTAssertEqual(store.items.count, 10)
+    }
+
+    func testSelectListDoesNotPolluteUndoStack() throws {
+        let store = TodoStore(fileURL: try makeStoreFileURL())
+        let a = store.addList(name: "A")
+        let b = store.addList(name: "B")
+        store.selectList(a.id)
+        store.selectList(b.id)
+        store.selectList(a.id)
+
+        // addList snapshots pushed; selectList did not.
+        // Undoing once should pop the most recent addList snapshot.
+        store.undo()
+        XCTAssertEqual(store.lists.map(\.name), ["A"])
+        store.undo()
+        XCTAssertTrue(store.lists.isEmpty)
+        XCTAssertFalse(store.canUndo)
     }
 
     private func makeStoreFileURL() throws -> URL {

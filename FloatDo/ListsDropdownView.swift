@@ -3,12 +3,15 @@ import AppKit
 
 struct ListsDropdownView: View {
     let lists: [TodoList]
+    let completedList: TodoList
+    let trashList: TodoList
     let selectedID: UUID?
     let autoFocusRenameID: UUID?
     var onSelect: (UUID) -> Void
     var onCreate: () -> Void
     var onRename: (TodoList, String) -> Void
     var onDelete: (TodoList) -> Void
+    var onEmptyTrash: () -> Void
     var onSetIcon: (TodoList, String) -> Void
     var onAutoFocusConsumed: () -> Void
 
@@ -23,9 +26,22 @@ struct ListsDropdownView: View {
     @ObservedObject private var tweaks = LayoutTweaks.shared
     @EnvironmentObject private var panelManager: PanelManager
 
+    private var allLists: [TodoList] {
+        lists + [completedList, trashList]
+    }
+
+    private var specialLists: [TodoList] {
+        [completedList, trashList]
+    }
+
     private var selected: TodoList? {
-        guard let id = selectedID else { return nil }
-        return lists.first(where: { $0.id == id })
+        guard let id = selectedID else { return allLists.first }
+        return allLists.first(where: { $0.id == id }) ?? allLists.first
+    }
+
+    private var isSpecialSelected: Bool {
+        guard let id = selected?.id else { return false }
+        return id == completedList.id || id == trashList.id
     }
 
     var body: some View {
@@ -46,7 +62,7 @@ struct ListsDropdownView: View {
             }
         }
         .popover(isPresented: $isShowingIconPicker, arrowEdge: .bottom) {
-            if let list = selected {
+            if let list = selected, !isSpecialList(list) {
                 ListIconPickerView(
                     selected: list.icon,
                     onPick: { symbol in
@@ -108,7 +124,7 @@ struct ListsDropdownView: View {
                 .font(.system(size: tweaks.bodyTextSize, weight: .medium))
                 .foregroundStyle(FloatDoTheme.textPrimary)
                 .lineLimit(1)
-                .fixedSize()
+                .truncationMode(.tail)
 
             Image(systemName: "chevron.down")
                 .font(.system(size: max(tweaks.secondaryTextSize - 2, 8), weight: .semibold))
@@ -147,6 +163,9 @@ struct ListsDropdownView: View {
     }
 
     private var triggerBackground: Color {
+        if isSpecialSelected && !isShowingMenu && !isTriggerHovering {
+            return FloatDoTheme.controlFill
+        }
         if isShowingMenu { return FloatDoTheme.controlFillStrong }
         if isTriggerHovering { return FloatDoTheme.rowHover }
         return FloatDoTheme.tabActiveFill
@@ -171,7 +190,6 @@ struct ListsDropdownView: View {
                 .onSubmit { commitEdit(list) }
                 .onExitCommand(perform: cancelEdit)
                 .frame(minWidth: 80, idealWidth: 120)
-                .fixedSize()
         }
         .padding(.horizontal, tweaks.pillHorizontalPadding)
         .padding(.vertical, tweaks.pillVerticalPadding)
@@ -206,6 +224,24 @@ struct ListsDropdownView: View {
                 )
             }
 
+            if !lists.isEmpty {
+                Divider()
+                    .padding(.vertical, 4)
+            }
+
+            ForEach(specialLists) { item in
+                DropdownListRow(
+                    list: item,
+                    isSelected: item.id == current.id,
+                    onTap: {
+                        isShowingMenu = false
+                        if item.id != current.id {
+                            onSelect(item.id)
+                        }
+                    }
+                )
+            }
+
             Divider()
                 .padding(.vertical, 4)
 
@@ -217,31 +253,44 @@ struct ListsDropdownView: View {
                     DispatchQueue.main.async { onCreate() }
                 }
             )
-            DropdownActionRow(
-                title: "Rename",
-                systemImage: "pencil",
-                action: {
-                    isShowingMenu = false
-                    DispatchQueue.main.async { beginEdit(current) }
-                }
-            )
-            DropdownActionRow(
-                title: "Change icon",
-                systemImage: "square.grid.2x2",
-                action: {
-                    isShowingMenu = false
-                    DispatchQueue.main.async { isShowingIconPicker = true }
-                }
-            )
-            DropdownActionRow(
-                title: "Delete list",
-                systemImage: "trash",
-                role: .destructive,
-                action: {
-                    isShowingMenu = false
-                    onDelete(current)
-                }
-            )
+
+            if current.id == trashList.id {
+                DropdownActionRow(
+                    title: "Empty Trash",
+                    systemImage: "trash",
+                    role: .destructive,
+                    action: {
+                        isShowingMenu = false
+                        onEmptyTrash()
+                    }
+                )
+            } else if !isSpecialList(current) {
+                DropdownActionRow(
+                    title: "Rename",
+                    systemImage: "pencil",
+                    action: {
+                        isShowingMenu = false
+                        DispatchQueue.main.async { beginEdit(current) }
+                    }
+                )
+                DropdownActionRow(
+                    title: "Change icon",
+                    systemImage: "square.grid.2x2",
+                    action: {
+                        isShowingMenu = false
+                        DispatchQueue.main.async { isShowingIconPicker = true }
+                    }
+                )
+                DropdownActionRow(
+                    title: "Delete list",
+                    systemImage: "trash",
+                    role: .destructive,
+                    action: {
+                        isShowingMenu = false
+                        onDelete(current)
+                    }
+                )
+            }
         }
         .padding(6)
         .frame(minWidth: 200)
@@ -250,6 +299,7 @@ struct ListsDropdownView: View {
     // MARK: - Edit helpers
 
     private func beginEdit(_ list: TodoList) {
+        guard !isSpecialList(list) else { return }
         draftName = list.name
         isEditing = true
         DispatchQueue.main.async {
@@ -270,6 +320,10 @@ struct ListsDropdownView: View {
     private func cancelEdit() {
         isEditing = false
         isEditorFocused = false
+    }
+
+    private func isSpecialList(_ list: TodoList) -> Bool {
+        list.id == completedList.id || list.id == trashList.id
     }
 }
 
