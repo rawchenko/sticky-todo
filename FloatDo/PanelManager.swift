@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 class KeyablePanel: NSPanel {
     override var canBecomeKey: Bool { true }
@@ -112,6 +113,7 @@ private enum DefaultsKey {
     static let panelAnchor = "FloatDo.panelAnchor.v2"
 }
 
+@MainActor
 class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     private var panel: KeyablePanel?
     private var ghostPanel: NSPanel?
@@ -119,12 +121,30 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     @Published var currentAnchor = EdgeAnchor(edge: .right, vertical: .top, anchorY: 0)
     @Published var isDragging = false
 
-    private let expandedSize = NSSize(width: PanelMetrics.expandedSize.width, height: PanelMetrics.expandedSize.height)
-    private let collapsedSize = NSSize(width: PanelMetrics.collapsedSize.width, height: PanelMetrics.collapsedSize.height)
+    private var expandedSize: NSSize {
+        NSSize(width: LayoutTweaks.shared.expandedWidth, height: LayoutTweaks.shared.expandedHeight)
+    }
+    private var collapsedSize: NSSize {
+        NSSize(width: LayoutTweaks.shared.collapsedWidth, height: LayoutTweaks.shared.collapsedHeight)
+    }
+    private var tweakCancellable: AnyCancellable?
     private var isProgrammaticMove = false
     private var pendingSnapWorkItem: DispatchWorkItem?
     private var pendingHoverWorkItem: DispatchWorkItem?
     private var isPointerInsidePanel = false
+    /// Set when the user expands the panel via the global shortcut. While true,
+    /// hover-exit does not trigger collapse — the panel stays open until the
+    /// user explicitly collapses it (shortcut again, or pointer enters then
+    /// leaves). Without this, pressing the shortcut expands the panel and then
+    /// the tracking area immediately collapses it because the pointer isn't
+    /// over the newly-enlarged frame.
+    private var isKeyboardPinned = false
+    /// Number of transient UI affordances (popovers, inline editors) that want
+    /// to keep the panel expanded even while the pointer leaves the panel
+    /// frame — popovers extend outside that frame, so their own hover would
+    /// otherwise trip the collapse timer.
+    private var hoverHoldCount = 0
+    private var isHoverHeld: Bool { hoverHoldCount > 0 }
 
     func setup<Content: View>(contentView: Content) {
         let panel = KeyablePanel(
@@ -160,6 +180,13 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
         self.panel = panel
         self.ghostPanel = makeGhostPanel()
         restoreOrSetDefaultAnchor()
+
+        tweakCancellable = LayoutTweaks.shared.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.positionAtAnchor(self.currentAnchor, animated: true)
+            }
     }
 
     private func makeGhostPanel() -> NSPanel {
@@ -202,6 +229,25 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
             hidePanel()
         } else {
             showPanel()
+        }
+    }
+
+    /// If the panel is hidden, show it expanded. If visible, toggle between
+    /// collapsed and expanded. Used by the expand/collapse global shortcut so
+    /// the user can reveal the full panel without hovering the handle.
+    func showOrToggleExpansion() {
+        if panel?.isVisible != true {
+            showPanel()
+            isKeyboardPinned = true
+            expand()
+            return
+        }
+        if isCollapsed {
+            isKeyboardPinned = true
+            expand()
+        } else {
+            isKeyboardPinned = false
+            collapse()
         }
     }
 
@@ -312,15 +358,19 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
                 context.timingFunction = CAMediaTimingFunction(controlPoints: 0.18, 1.0, 0.22, 1.0)
                 panel.animator().setFrame(newFrame, display: true)
             } completionHandler: { [weak self] in
-                self?.isProgrammaticMove = false
-                self?.syncHoverStateWithPointerLocation(applyState: true)
+                MainActor.assumeIsolated {
+                    self?.isProgrammaticMove = false
+                    self?.syncHoverStateWithPointerLocation(applyState: true)
+                }
             }
         } else {
             isProgrammaticMove = true
             panel.setFrame(newFrame, display: true)
             DispatchQueue.main.async { [weak self] in
-                self?.isProgrammaticMove = false
-                self?.syncHoverStateWithPointerLocation(applyState: true)
+                MainActor.assumeIsolated {
+                    self?.isProgrammaticMove = false
+                    self?.syncHoverStateWithPointerLocation(applyState: true)
+                }
             }
         }
     }
@@ -328,7 +378,7 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     private func frame(for anchor: EdgeAnchor, on screen: NSScreen, size overrideSize: NSSize? = nil) -> NSRect {
         let visible = screen.visibleFrame
         let size = overrideSize ?? resolvedSize(for: visible)
-        let inset = PanelMetrics.edgeInset
+        let inset = LayoutTweaks.shared.edgeInset
 
         let rawMinY: CGFloat
         switch anchor.vertical {
@@ -362,8 +412,9 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     private func clampPanelMinY(_ minY: CGFloat, height: CGFloat, in visible: NSRect) -> CGFloat {
-        let lower = visible.minY
-        let upper = max(visible.minY, visible.maxY - height)
+        let inset = LayoutTweaks.shared.edgeInset
+        let lower = visible.minY + inset
+        let upper = max(lower, visible.maxY - height - inset)
         return min(max(minY, lower), upper)
     }
 
@@ -448,7 +499,9 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
             ctx.duration = 0.16
             ghost.animator().alphaValue = 0
         } completionHandler: { [weak ghost] in
-            ghost?.orderOut(nil)
+            MainActor.assumeIsolated {
+                ghost?.orderOut(nil)
+            }
         }
     }
 
@@ -508,15 +561,22 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
         }
 
         if isHovered {
+            // Pointer entered the keyboard-pinned panel — release the pin so
+            // subsequent hover-exit can collapse normally.
+            isKeyboardPinned = false
             panel?.makeKey()
             expand()
+            return
+        }
+
+        if isKeyboardPinned || isHoverHeld {
             return
         }
 
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.syncHoverStateWithPointerLocation()
-            if !self.isPointerInsidePanel && !self.isDragging {
+            if !self.isPointerInsidePanel && !self.isDragging && !self.isKeyboardPinned && !self.isHoverHeld {
                 self.collapse()
             }
         }
@@ -533,16 +593,36 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
         guard applyState else { return }
 
         if isPointerInside {
+            isKeyboardPinned = false
             expand()
-        } else {
+        } else if !isKeyboardPinned && !isHoverHeld {
             collapse()
         }
+    }
+
+    // MARK: - Hover hold
+
+    /// Increment the hover-hold counter. While the count is positive, the
+    /// panel will not auto-collapse on pointer exit. Callers must pair each
+    /// push with a later `popHoverHold()`.
+    func pushHoverHold() {
+        hoverHoldCount += 1
+        pendingHoverWorkItem?.cancel()
+    }
+
+    /// Decrement the hover-hold counter. When the count reaches zero and the
+    /// pointer is outside the panel, collapse after the usual exit delay.
+    func popHoverHold() {
+        guard hoverHoldCount > 0 else { return }
+        hoverHoldCount -= 1
+        guard hoverHoldCount == 0, !isPointerInsidePanel, !isKeyboardPinned, !isDragging else { return }
+        handlePointerHoverChange(false)
     }
 }
 
 private struct GhostView: View {
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
         ZStack {
             shape.fill(Color.white.opacity(0.08))
             shape.strokeBorder(Color.white.opacity(0.55), lineWidth: 1.5)

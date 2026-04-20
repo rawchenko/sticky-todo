@@ -1,20 +1,36 @@
 import SwiftUI
+import AppKit
 
 @main
 struct FloatDoApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        Settings {
-            SettingsView()
-        }
+        // Empty scene; the AppDelegate owns the panel and settings windows
+        // directly via AppKit, so SwiftUI doesn't need to manage any.
+        Settings { EmptyView() }
     }
 }
 
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Exposed so SwiftUI views hosted inside our AppKit panel can call back
+    /// into the delegate without relying on `NSApp.delegate as? AppDelegate`,
+    /// which returns nil under `@NSApplicationDelegateAdaptor` in some setups.
+    static private(set) weak var shared: AppDelegate?
+
     private var panelManager: PanelManager?
     private var statusItem: NSStatusItem?
     private var hotkeyObserver: NSObjectProtocol?
+    private var expandHotkeyObserver: NSObjectProtocol?
+    private var settingsWindow: NSWindow?
+    private var settingsCloseObserver: NSObjectProtocol?
+    private var wasAccessoryBeforeSettings = false
+
+    override init() {
+        super.init()
+        AppDelegate.shared = self
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppearanceMode.current.apply()
@@ -27,18 +43,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         self.panelManager = manager
         setupStatusBarItem()
 
-        _ = GlobalHotkey.shared
+        _ = GlobalHotkey.toggleVisibility
+        _ = GlobalHotkey.expandCollapse
         hotkeyObserver = NotificationCenter.default.addObserver(
             forName: .floatDoToggleHotkey,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.panelManager?.togglePanel()
+            MainActor.assumeIsolated {
+                self?.panelManager?.togglePanel()
+            }
+        }
+        expandHotkeyObserver = NotificationCenter.default.addObserver(
+            forName: .floatDoExpandCollapseHotkey,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.panelManager?.showOrToggleExpansion()
+            }
         }
     }
 
     deinit {
         if let observer = hotkeyObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = expandHotkeyObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = settingsCloseObserver {
             NotificationCenter.default.removeObserver(observer)
         }
     }
@@ -66,29 +100,59 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panelManager?.togglePanel()
     }
 
-    @objc private func openSettings() {
-        NSApp.activate(ignoringOtherApps: true)
-        DispatchQueue.main.async {
-            let event = NSEvent.keyEvent(
-                with: .keyDown,
-                location: .zero,
-                modifierFlags: .command,
-                timestamp: ProcessInfo.processInfo.systemUptime,
-                windowNumber: 0,
-                context: nil,
-                characters: ",",
-                charactersIgnoringModifiers: ",",
-                isARepeat: false,
-                keyCode: 0x2B
+    @objc func openSettings() {
+        let wasAccessory = NSApp.activationPolicy() == .accessory
+        if wasAccessory {
+            NSApp.setActivationPolicy(.regular)
+        }
+
+        let window: NSWindow
+        if let existing = settingsWindow {
+            window = existing
+        } else {
+            window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 460, height: 520),
+                styleMask: [.titled, .closable, .miniaturizable],
+                backing: .buffered,
+                defer: false
             )
-            if let event, NSApp.mainMenu?.performKeyEquivalent(with: event) == true {
-                return
+            window.title = "FloatDo Settings"
+            window.contentView = NSHostingView(rootView: SettingsView())
+            window.isReleasedWhenClosed = false
+            window.center()
+
+            settingsWindow = window
+            wasAccessoryBeforeSettings = wasAccessory
+
+            settingsCloseObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.willCloseNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.handleSettingsWindowClose()
+                }
             }
-            if #available(macOS 14, *) {
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-            } else {
-                NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-            }
+        }
+
+        // Clicks inside the nonactivating panel don't promote FloatDo to
+        // frontmost, so the fresh Settings window otherwise orders behind the
+        // previously-active app. `orderFrontRegardless` forces it on top,
+        // then `activate` brings the app forward so the window can take focus.
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+    }
+
+    private func handleSettingsWindowClose() {
+        if let observer = settingsCloseObserver {
+            NotificationCenter.default.removeObserver(observer)
+            settingsCloseObserver = nil
+        }
+        settingsWindow = nil
+        if wasAccessoryBeforeSettings {
+            NSApp.setActivationPolicy(.accessory)
+            wasAccessoryBeforeSettings = false
         }
     }
 

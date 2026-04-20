@@ -1,8 +1,11 @@
 import Foundation
+import AppKit
 
 struct TodoList: Identifiable, Codable, Equatable {
     static let defaultName = "New List"
-    static let defaultIcon = "📝"
+    /// SF Symbol name shown as the list icon. All renderers apply
+    /// `.symbolVariant(.fill)`, so prefer base names without `.fill`.
+    static let defaultIcon = "checklist"
 
     let id: UUID
     var name: String
@@ -17,7 +20,7 @@ struct TodoList: Identifiable, Codable, Equatable {
     ) {
         self.id = id
         self.name = name
-        self.icon = icon
+        self.icon = TodoList.sanitize(icon)
         self.createdAt = createdAt
     }
 
@@ -31,12 +34,19 @@ struct TodoList: Identifiable, Codable, Equatable {
         name = try container.decode(String.self, forKey: .name)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
 
-        let decoded = try container.decodeIfPresent(String.self, forKey: .icon)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if let decoded, !decoded.isEmpty {
-            icon = decoded
-        } else {
-            icon = TodoList.defaultIcon
+        let decoded = try container.decodeIfPresent(String.self, forKey: .icon)
+        icon = TodoList.sanitize(decoded)
+    }
+
+    /// Accept only SF Symbol names; fall back to the default for empty strings
+    /// or legacy emoji values carried over from older stores.
+    static func sanitize(_ raw: String?) -> String {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty,
+              NSImage(systemSymbolName: trimmed, accessibilityDescription: nil) != nil
+        else {
+            return defaultIcon
         }
+        return trimmed
     }
 }

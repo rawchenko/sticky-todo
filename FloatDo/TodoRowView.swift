@@ -28,9 +28,9 @@ struct TodoCheckboxToggleStyle: ToggleStyle {
                 if configuration.isOn {
                     Circle()
                         .fill(FloatDoTheme.success)
-                        .frame(width: 18, height: 18)
+                        .frame(width: LayoutTweaks.shared.checkboxSize, height: LayoutTweaks.shared.checkboxSize)
                     Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: LayoutTweaks.shared.checkmarkSize, weight: .bold))
                         .foregroundStyle(Color.white)
                 } else {
                     Circle()
@@ -41,7 +41,7 @@ struct TodoCheckboxToggleStyle: ToggleStyle {
                             ),
                             lineWidth: 1.5
                         )
-                        .frame(width: 18, height: 18)
+                        .frame(width: LayoutTweaks.shared.checkboxSize, height: LayoutTweaks.shared.checkboxSize)
                 }
             }
             .frame(width: 18, height: 18)
@@ -57,11 +57,9 @@ struct TodoRowView: View {
     let isDragging: Bool
     let isDragActive: Bool
     let yOffset: CGFloat
-    var depth: Int = 0
     var onToggle: () -> Void
     var onDelete: () -> Void
     var onRename: (String) -> Void = { _ in }
-    var onAddSubtask: (() -> Void)? = nil
     var onDragChanged: (CGFloat) -> Void = { _ in }
     var onDragEnded: (CGFloat) -> Void = { _ in }
 
@@ -69,6 +67,7 @@ struct TodoRowView: View {
     @State private var didPushCursor = false
     @State private var draftTitle = ""
     @FocusState private var isEditorFocused: Bool
+    @ObservedObject private var tweaks = LayoutTweaks.shared
 
     private var showsStrikethroughOverlay: Bool {
         item.isCompleted && !isEditorFocused
@@ -80,7 +79,7 @@ struct TodoRowView: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: tweaks.rowInnerSpacing) {
             Toggle(isOn: Binding(
                 get: { item.isCompleted },
                 set: { _ in onToggle() }
@@ -92,7 +91,7 @@ struct TodoRowView: View {
             ZStack(alignment: .topLeading) {
                 TextField("Task", text: $draftTitle, axis: .vertical)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 14))
+                    .font(.system(size: tweaks.bodyTextSize))
                     .foregroundStyle(titleColor)
                     .lineLimit(1...5)
                     .focused($isEditorFocused)
@@ -102,7 +101,7 @@ struct TodoRowView: View {
 
                 if showsStrikethroughOverlay {
                     Text(item.title)
-                        .font(.system(size: 14))
+                        .font(.system(size: tweaks.bodyTextSize))
                         .strikethrough(true)
                         .foregroundStyle(FloatDoTheme.textSecondary)
                         .lineLimit(1...5)
@@ -116,23 +115,9 @@ struct TodoRowView: View {
 
             Spacer(minLength: 4)
 
-            if let onAddSubtask {
-                Button(action: onAddSubtask) {
-                    Image(systemName: "arrow.turn.down.right")
-                        .font(.system(size: 11, weight: .regular))
-                        .foregroundStyle(FloatDoTheme.textSecondary)
-                        .frame(width: 22, height: 18)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .pointerCursor(.pointingHand, active: isHovering && !isDragActive && !isEditorFocused)
-                .opacity(isHovering && !isDragActive && !isEditorFocused ? 1 : 0)
-                .allowsHitTesting(isHovering && !isDragActive && !isEditorFocused)
-            }
-
             Button(action: onDelete) {
                 Image(systemName: "trash")
-                    .font(.system(size: 11, weight: .regular))
+                    .font(.system(size: tweaks.actionIconSize, weight: .regular))
                     .foregroundStyle(FloatDoTheme.textSecondary)
                     .frame(width: 22, height: 18)
                     .contentShape(Rectangle())
@@ -142,9 +127,8 @@ struct TodoRowView: View {
             .opacity(isHovering && !isDragActive && !isEditorFocused ? 1 : 0)
             .allowsHitTesting(isHovering && !isDragActive && !isEditorFocused)
         }
-        .padding(.leading, depth > 0 ? 34 : 12)
-        .padding(.trailing, 12)
-        .padding(.vertical, 11)
+        .padding(.horizontal, tweaks.rowHorizontalPadding)
+        .padding(.vertical, tweaks.rowVerticalPadding)
         .background(WindowDragBlocker())
         .background(rowBackground)
         .background(
@@ -219,7 +203,7 @@ struct TodoRowView: View {
     private var hoverCursor: NSCursor? { .openHand }
 
     private var rowBackground: some View {
-        RoundedRectangle(cornerRadius: 12, style: .continuous)
+        RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous)
             .fill(isDragging
                 ? FloatDoTheme.controlFillStrong
                 : (isHovering && !isDragActive ? FloatDoTheme.rowHover : .clear))
