@@ -276,10 +276,17 @@ struct ListsDropdownView: View {
                 }
             }
 
-            if !lists.isEmpty {
-                Divider()
-                    .padding(.vertical, 4)
-            }
+            DropdownActionRow(
+                title: "New list",
+                systemImage: "folder.fill.badge.plus",
+                action: {
+                    isShowingMenu = false
+                    DispatchQueue.main.async { onCreate() }
+                }
+            )
+
+            Divider()
+                .padding(.vertical, 4)
 
             ForEach(specialLists) { item in
                 DropdownListRow(
@@ -295,17 +302,10 @@ struct ListsDropdownView: View {
                 )
             }
 
-            Divider()
-                .padding(.vertical, 4)
-
-            DropdownActionRow(
-                title: "New list",
-                systemImage: "folder.fill.badge.plus",
-                action: {
-                    isShowingMenu = false
-                    DispatchQueue.main.async { onCreate() }
-                }
-            )
+            if current.id == trashList.id || !isSpecialList(current) {
+                Divider()
+                    .padding(.vertical, 4)
+            }
 
             if current.id == trashList.id {
                 DropdownActionRow(
