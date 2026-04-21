@@ -13,6 +13,7 @@ struct ListsDropdownView: View {
     var onDelete: (TodoList) -> Void
     var onEmptyTrash: () -> Void
     var onSetIcon: (TodoList, String) -> Void
+    var onSetColor: (TodoList, ListIconColor?) -> Void
     var onReorder: (Int, Int) -> Void
     var onAutoFocusConsumed: () -> Void
 
@@ -22,6 +23,7 @@ struct ListsDropdownView: View {
     @State private var isTriggerPressed = false
     @State private var isShowingMenu = false
     @State private var isShowingIconPicker = false
+    @State private var isShowingColorPicker = false
     @State private var heldPanelHover = false
     @State private var dragSession: ListDragSession?
     @State private var rowFrames: [UUID: CGRect] = [:]
@@ -96,6 +98,17 @@ struct ListsDropdownView: View {
                 )
             }
         }
+        .popover(isPresented: $isShowingColorPicker, arrowEdge: .bottom) {
+            if let list = selected, !isSpecialList(list) {
+                ListColorPickerView(
+                    selected: list.iconColor,
+                    onPick: { color in
+                        onSetColor(list, color)
+                        isShowingColorPicker = false
+                    }
+                )
+            }
+        }
         .onAppear {
             if let id = autoFocusRenameID, let list = lists.first(where: { $0.id == id }) {
                 beginEdit(list)
@@ -112,6 +125,7 @@ struct ListsDropdownView: View {
             if !showing { cancelDrag() }
         }
         .onChange(of: isShowingIconPicker) { _, _ in syncPanelHoverHold() }
+        .onChange(of: isShowingColorPicker) { _, _ in syncPanelHoverHold() }
         .onChange(of: isEditing) { _, _ in syncPanelHoverHold() }
         .onChange(of: lists.map(\.id)) { _, ids in
             let live = Set(ids)
@@ -125,7 +139,7 @@ struct ListsDropdownView: View {
     }
 
     private func syncPanelHoverHold() {
-        let shouldHold = isShowingMenu || isShowingIconPicker || isEditing
+        let shouldHold = isShowingMenu || isShowingIconPicker || isShowingColorPicker || isEditing
         guard shouldHold != heldPanelHover else { return }
         heldPanelHover = shouldHold
         if shouldHold {
@@ -150,10 +164,11 @@ struct ListsDropdownView: View {
             Image(systemName: list.icon)
                 .symbolVariant(.fill)
                 .font(.system(size: tweaks.listIconSize, weight: .medium))
-                .foregroundStyle(FloatListTheme.textPrimary)
+                .foregroundStyle(list.iconColor?.color ?? FloatListTheme.textPrimary)
                 .symbolRenderingMode(.monochrome)
                 .contentTransition(.symbolEffect(.replace))
                 .animation(.easeOut(duration: 0.2), value: list.icon)
+                .animation(.easeOut(duration: 0.2), value: list.iconColor)
 
             Text(list.name)
                 .font(.system(size: tweaks.bodyTextSize, weight: .medium))
@@ -214,7 +229,7 @@ struct ListsDropdownView: View {
             Image(systemName: list.icon)
                 .symbolVariant(.fill)
                 .font(.system(size: tweaks.listIconSize, weight: .medium))
-                .foregroundStyle(FloatListTheme.textPrimary)
+                .foregroundStyle(list.iconColor?.color ?? FloatListTheme.textPrimary)
                 .symbolRenderingMode(.monochrome)
 
             TextField("List name", text: $draftName)
@@ -317,6 +332,14 @@ struct ListsDropdownView: View {
                     action: {
                         isShowingMenu = false
                         DispatchQueue.main.async { isShowingIconPicker = true }
+                    }
+                )
+                DropdownActionRow(
+                    title: "Change color",
+                    systemImage: "paintpalette",
+                    action: {
+                        isShowingMenu = false
+                        DispatchQueue.main.async { isShowingColorPicker = true }
                     }
                 )
                 DropdownActionRow(
@@ -617,7 +640,7 @@ private struct DropdownListRow: View {
             Image(systemName: list.icon)
                 .symbolVariant(.fill)
                 .font(.system(size: tweaks.listIconSize, weight: .medium))
-                .foregroundStyle(FloatListTheme.textPrimary)
+                .foregroundStyle(list.iconColor?.color ?? FloatListTheme.textPrimary)
                 .symbolRenderingMode(.monochrome)
                 .frame(width: 20, alignment: .center)
 
