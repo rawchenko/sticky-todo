@@ -36,6 +36,8 @@ enum ListIconColor: String, Codable, CaseIterable, Equatable {
 
 struct TodoList: Identifiable, Codable, Equatable {
     static let defaultName = "New List"
+    static let inboxID = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
+    static let inboxName = "Inbox"
     static let completedID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
     static let completedName = "Completed"
     static let completedIcon = "checkmark.circle.fill"

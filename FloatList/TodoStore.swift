@@ -97,6 +97,8 @@ class TodoStore: ObservableObject {
     }
 
     func load() {
+        defer { ensureDefaultInboxIfEmpty() }
+
         guard fileManager.fileExists(atPath: fileURL.path) else {
             items = []
             lists = []
@@ -123,6 +125,19 @@ class TodoStore: ObservableObject {
         } catch {
             recoverUnreadableStore(after: error)
         }
+    }
+
+    /// Populate a fresh/empty store with a default `Inbox` so the app always
+    /// boots into a valid state with a selected regular list. Runs outside the
+    /// undo stack so ordinary `undo()` can never strip the precreated list.
+    private func ensureDefaultInboxIfEmpty() {
+        guard isStorageWritable else { return }
+        guard lists.isEmpty, items.isEmpty else { return }
+
+        let inbox = TodoList(id: TodoList.inboxID, name: TodoList.inboxName)
+        lists.append(inbox)
+        selectedListID = inbox.id
+        save()
     }
 
     func save() {
