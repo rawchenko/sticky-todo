@@ -36,6 +36,7 @@ class TodoStore: ObservableObject {
     private let fileURL: URL
     private let fileManager: FileManager
     private var isStorageWritable = true
+    private var isBatching = false
 
     init(fileURL: URL? = nil, fileManager: FileManager = .default) {
         self.fileManager = fileManager
@@ -126,6 +127,7 @@ class TodoStore: ObservableObject {
 
     func save() {
         guard isStorageWritable else { return }
+        guard !isBatching else { return }
         let file = TodoStoreFile(
             schemaVersion: Self.currentSchemaVersion,
             lists: lists,
@@ -139,11 +141,20 @@ class TodoStore: ObservableObject {
     // MARK: - Undo
 
     private func captureUndoSnapshot() {
+        guard !isBatching else { return }
         undoStack.append(UndoSnapshot(items: items, lists: lists, selectedListID: selectedListID))
         if undoStack.count > undoStackLimit {
             undoStack.removeFirst(undoStack.count - undoStackLimit)
         }
         if !canUndo { canUndo = true }
+    }
+
+    private func performBatch(_ body: () -> Void) {
+        captureUndoSnapshot()
+        isBatching = true
+        body()
+        isBatching = false
+        save()
     }
 
     func undo() {
@@ -296,6 +307,53 @@ class TodoStore: ObservableObject {
         save()
     }
 
+    // MARK: - Bulk actions
+
+    private func applyMany(
+        _ items: [TodoItem],
+        filter: (TodoItem) -> Bool,
+        action: (TodoItem) -> Void
+    ) {
+        let targets = items.filter(filter)
+        guard !targets.isEmpty else { return }
+        performBatch {
+            for item in targets { action(item) }
+        }
+    }
+
+    func toggleMany(_ items: [TodoItem]) {
+        applyMany(items,
+                  filter: { item in item.listID.map { !self.isSpecialListID($0) } ?? false },
+                  action: toggle)
+    }
+
+    func moveManyToTrash(_ items: [TodoItem]) {
+        applyMany(items, filter: { !$0.isTrashed }, action: moveToTrash)
+    }
+
+    func restoreMany(_ items: [TodoItem]) {
+        applyMany(items, filter: { $0.isTrashed }, action: restore)
+    }
+
+    func permanentlyDeleteMany(_ items: [TodoItem]) {
+        let ids = Set(items.map { $0.id })
+        guard !ids.isEmpty, self.items.contains(where: { ids.contains($0.id) }) else { return }
+        performBatch {
+            self.items.removeAll { ids.contains($0.id) }
+            if selectedListID == TodoList.trashID && lists.isEmpty && !hasTrashedItems {
+                selectedListID = nil
+            }
+        }
+    }
+
+    func moveItems(_ items: [TodoItem], to targetListID: UUID) {
+        guard !isSpecialListID(targetListID) else { return }
+        guard lists.contains(where: { $0.id == targetListID }) else { return }
+        applyMany(items,
+                  filter: { !$0.isTrashed && $0.listID != targetListID },
+                  action: { self.moveItem($0, to: targetListID) })
+    }
+
     // MARK: - Lists
 
     @discardableResult
@@ -329,6 +387,14 @@ class TodoStore: ObservableObject {
         guard lists[idx].icon != trimmed else { return }
         captureUndoSnapshot()
         lists[idx].icon = trimmed
+        save()
+    }
+
+    func setListColor(_ list: TodoList, to color: ListIconColor?) {
+        guard let idx = lists.firstIndex(where: { $0.id == list.id }) else { return }
+        guard lists[idx].iconColor != color else { return }
+        captureUndoSnapshot()
+        lists[idx].iconColor = color
         save()
     }
 

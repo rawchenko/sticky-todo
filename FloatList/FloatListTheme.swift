@@ -108,6 +108,7 @@ enum FloatListTheme {
         light: Color.black.opacity(0.06),
         dark: Color.white.opacity(0.10)
     )
+    static let selectionFill = Color.accentColor.opacity(0.18)
 
     // Strokes / borders that read against the panel content
     static let hairline = Color.dynamic(
