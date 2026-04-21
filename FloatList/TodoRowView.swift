@@ -360,6 +360,8 @@ struct TodoRowView: View {
     var isSelected: Bool = false
     var hasSelectedNeighborAbove: Bool = false
     var hasSelectedNeighborBelow: Bool = false
+    var bulkSelectionCount: Int = 0
+    var bulkAnyActive: Bool = false
     var onSelect: (TodoRowSelectionIntent) -> Void = { _ in }
 
     @State private var isHovering = false
@@ -534,28 +536,30 @@ struct TodoRowView: View {
             if !isEditing { draftTitle = new }
         }
         .contextMenu {
+            let isBulk = bulkSelectionCount > 1
+            let countLabel = isBulk ? "\(bulkSelectionCount) Items" : nil
             if isTrashItem {
                 if let onRestore {
                     Button {
                         onRestore()
                     } label: {
-                        Label("Restore", systemImage: "arrow.uturn.backward")
+                        Label(countLabel.map { "Restore \($0)" } ?? "Restore", systemImage: "arrow.uturn.backward")
                     }
                 }
                 Divider()
                 Button(role: .destructive) {
                     onDelete()
                 } label: {
-                    Label("Delete Forever", systemImage: "trash")
+                    Label(countLabel.map { "Delete \($0) Forever" } ?? "Delete Forever", systemImage: "trash")
                 }
             } else {
+                let markComplete = isBulk ? bulkAnyActive : !item.isCompleted
                 Button {
                     onToggle()
                 } label: {
-                    Label(
-                        item.isCompleted ? "Mark Incomplete" : "Mark Complete",
-                        systemImage: item.isCompleted ? "circle" : "checkmark.circle"
-                    )
+                    let suffix = markComplete ? "Complete" : "Incomplete"
+                    let title = countLabel.map { "Mark \($0) \(suffix)" } ?? "Mark \(suffix)"
+                    Label(title, systemImage: markComplete ? "checkmark.circle" : "circle")
                 }
                 if !moveDestinations.isEmpty {
                     Divider()
@@ -568,14 +572,14 @@ struct TodoRowView: View {
                             }
                         }
                     } label: {
-                        Label("Move to…", systemImage: "folder")
+                        Label(countLabel.map { "Move \($0) to…" } ?? "Move to…", systemImage: "folder")
                     }
                 }
                 Divider()
                 Button(role: .destructive) {
                     onDelete()
                 } label: {
-                    Label("Delete", systemImage: "trash")
+                    Label(countLabel.map { "Delete \($0)" } ?? "Delete", systemImage: "trash")
                 }
             }
         }

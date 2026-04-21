@@ -780,6 +780,8 @@ struct ContentView: View {
         let pendingToggleAnimation = pendingToggleAnimations[item.id]
         let hasNeighborAbove = prevItemID.map { selectedItemIDs.contains($0) } ?? false
         let hasNeighborBelow = nextItemID.map { selectedItemIDs.contains($0) } ?? false
+        let isInMultiSelection = selectedItemIDs.contains(item.id) && selectedItemIDs.count > 1
+        let moveExcludeListID = isInMultiSelection ? sharedSourceListID(for: selectedItems) : item.listID
         return TodoRowView(
             item: item,
             isTrashItem: isTrashItem,
@@ -789,20 +791,32 @@ struct ContentView: View {
             completionOverride: pendingToggleAnimation?.targetCompleted,
             isExiting: pendingToggleAnimation != nil,
             onToggle: {
-                handleToggle(for: item)
+                if isInMultiSelection {
+                    performBulkToggle()
+                } else {
+                    handleToggle(for: item)
+                }
             },
             onDelete: {
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-                    if store.isTrashSelected {
-                        store.permanentlyDelete(item)
-                    } else {
-                        store.moveToTrash(item)
+                if isInMultiSelection {
+                    performBulkDelete()
+                } else {
+                    withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                        if store.isTrashSelected {
+                            store.permanentlyDelete(item)
+                        } else {
+                            store.moveToTrash(item)
+                        }
                     }
                 }
             },
             onRestore: store.isTrashSelected ? {
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-                    store.restore(item)
+                if isInMultiSelection {
+                    performBulkRestore()
+                } else {
+                    withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                        store.restore(item)
+                    }
                 }
             } : nil,
             onRename: { newTitle in
@@ -814,10 +828,14 @@ struct ContentView: View {
             onDragEnded: { translation in
                 commitDrag(for: item.id, translation: translation)
             },
-            moveDestinations: isTrashItem ? [] : store.lists.filter { $0.id != item.listID },
+            moveDestinations: isTrashItem ? [] : store.lists.filter { $0.id != moveExcludeListID },
             onMoveToList: { targetListID in
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-                    store.moveItem(item, to: targetListID)
+                if isInMultiSelection {
+                    performBulkMove(to: targetListID)
+                } else {
+                    withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                        store.moveItem(item, to: targetListID)
+                    }
                 }
             },
             isToggleEnabled: !isTrashItem && pendingToggleAnimation == nil && draggingID == nil,
@@ -825,6 +843,8 @@ struct ContentView: View {
             isSelected: selectedItemIDs.contains(item.id),
             hasSelectedNeighborAbove: hasNeighborAbove,
             hasSelectedNeighborBelow: hasNeighborBelow,
+            bulkSelectionCount: isInMultiSelection ? selectedItemIDs.count : 0,
+            bulkAnyActive: isInMultiSelection && selectedItems.contains { !$0.isCompleted },
             onSelect: { intent in
                 handleRowSelect(item, intent: intent)
             }
