@@ -333,6 +333,12 @@ private struct TodoRowContent<Leading: View, TitleContent: View>: View {
     }
 }
 
+enum TodoRowSelectionIntent {
+    case replace
+    case toggle
+    case extendRange
+}
+
 struct TodoRowView: View {
     let item: TodoItem
     let isTrashItem: Bool
@@ -351,6 +357,10 @@ struct TodoRowView: View {
     var onMoveToList: (UUID) -> Void = { _ in }
     var isToggleEnabled = true
     var isReorderEnabled = true
+    var isSelected: Bool = false
+    var hasSelectedNeighborAbove: Bool = false
+    var hasSelectedNeighborBelow: Bool = false
+    var onSelect: (TodoRowSelectionIntent) -> Void = { _ in }
 
     @State private var isHovering = false
     @State private var didPushCursor = false
@@ -440,7 +450,7 @@ struct TodoRowView: View {
         )
         .background(reorderCardBackground)
         .background(rowBackground)
-        .clipShape(RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous))
+        .clipShape(rowShape)
         .compositingGroup()
         .offset(x: swipeOffset)
         .background(swipeRevealLayer)
@@ -477,6 +487,19 @@ struct TodoRowView: View {
             }
         )
         .contentShape(Rectangle())
+        .onTapGesture {
+            guard !isEditing else { return }
+            let flags = NSEvent.modifierFlags
+            let intent: TodoRowSelectionIntent
+            if flags.contains(.shift) {
+                intent = .extendRange
+            } else if flags.contains(.command) {
+                intent = .toggle
+            } else {
+                intent = .replace
+            }
+            onSelect(intent)
+        }
         .allowsHitTesting(!isExiting)
         .opacity(isExiting ? 0.78 : 1)
         .brightness(isReorderLifted ? 0.02 : (isExiting ? -0.01 : 0))
@@ -484,7 +507,6 @@ struct TodoRowView: View {
         .scaleEffect(isDragging ? 1.014 : (hasActivatedReorderGesture ? 1.008 : (isExiting ? 0.992 : 1.0)), anchor: .topLeading)
         .shadow(color: reorderShadowColor, radius: reorderShadowRadius, y: reorderShadowYOffset)
         .zIndex(reorderZIndex)
-        .pointerCursor(hoverCursor, active: !isDragActive && isReorderEnabled)
         .animation(.easeOut(duration: 0.18), value: isExiting)
         .animation(.spring(response: 0.22, dampingFraction: 0.82), value: hasActivatedReorderGesture)
         .onHover { hovering in
@@ -608,7 +630,10 @@ struct TodoRowView: View {
                     .foregroundStyle(titleColor)
                     .fixedSize(horizontal: false, vertical: true)
                     .contentShape(Rectangle())
-                    .onTapGesture(count: 2) { isEditing = true }
+                    .onTapGesture(count: 2) {
+                        guard !isTrashItem else { return }
+                        isEditing = true
+                    }
             }
         }
     }
@@ -847,8 +872,17 @@ struct TodoRowView: View {
         return raw.sign == .minus ? -magnitude : magnitude
     }
 
-    private var hoverCursor: NSCursor? {
-        isReorderEnabled ? .openHand : nil
+    private var rowShape: UnevenRoundedRectangle {
+        let r = tweaks.rowCornerRadius
+        let top: CGFloat = isSelected && hasSelectedNeighborAbove ? 0 : r
+        let bot: CGFloat = isSelected && hasSelectedNeighborBelow ? 0 : r
+        return UnevenRoundedRectangle(
+            topLeadingRadius: top,
+            bottomLeadingRadius: bot,
+            bottomTrailingRadius: bot,
+            topTrailingRadius: top,
+            style: .continuous
+        )
     }
 
     private var rowBackground: some View {
@@ -857,6 +891,8 @@ struct TodoRowView: View {
             fill = .clear
         } else if isEditing {
             fill = FloatListTheme.controlFillStrong
+        } else if isSelected {
+            fill = FloatListTheme.selectionFill
         } else if isExiting {
             fill = FloatListTheme.controlFill.opacity(0.55)
         } else if isHovering && !isDragActive {
@@ -864,8 +900,7 @@ struct TodoRowView: View {
         } else {
             fill = .clear
         }
-        return RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous)
-            .fill(fill)
+        return rowShape.fill(fill)
     }
 
     private var reorderCardBackground: some View {

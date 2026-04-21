@@ -109,7 +109,7 @@ private struct AddListButton: View {
     }
 }
 
-private struct PillIconButton<Icon: View>: View {
+struct PillIconButton<Icon: View>: View {
     var help: String
     var action: () -> Void
     var onHoverStart: () -> Void = {}
@@ -161,6 +161,54 @@ private struct PillIconButton<Icon: View>: View {
             isPressed = pressing
         }
     }
+}
+
+struct PillIconMenuItem: Identifiable {
+    let id: UUID
+    let title: String
+    let systemImage: String
+    let action: () -> Void
+}
+
+struct PillIconMenu<Icon: View>: View {
+    var help: String
+    var items: [PillIconMenuItem]
+    @ViewBuilder var icon: () -> Icon
+
+    var body: some View {
+        PillIconButton(help: help) {
+            NSMenuPresenter.present(items: items)
+        } icon: {
+            icon()
+        }
+    }
+}
+
+private enum NSMenuPresenter {
+    static func present(items: [PillIconMenuItem]) {
+        guard let event = NSApp.currentEvent, let view = event.window?.contentView else { return }
+        let menu = NSMenu()
+        for item in items {
+            let menuItem = NSMenuItem(title: item.title, action: nil, keyEquivalent: "")
+            if let image = NSImage(systemSymbolName: item.systemImage, accessibilityDescription: item.title) {
+                menuItem.image = image
+            }
+            let target = MenuActionTarget(handler: item.action)
+            menuItem.target = target
+            menuItem.action = #selector(MenuActionTarget.fire)
+            menuItem.representedObject = target
+            menu.addItem(menuItem)
+        }
+        NSMenu.popUpContextMenu(menu, with: event, for: view)
+    }
+}
+
+private final class MenuActionTarget: NSObject {
+    let handler: () -> Void
+    init(handler: @escaping () -> Void) {
+        self.handler = handler
+    }
+    @objc func fire() { handler() }
 }
 
 private struct UndoButton: View {
@@ -225,6 +273,9 @@ struct ContentView: View {
     @State private var expandedCompletedListIDs: Set<UUID> = []
     @State private var hoveredCompletedToggleListID: UUID?
     @State private var isHoldingForInput = false
+    @State private var selectedItemIDs: Set<UUID> = []
+    @State private var selectionAnchorID: UUID?
+    @State private var selectionKeyMonitor: Any?
 
     private var hasInputDraft: Bool {
         newTaskTitle.contains { !$0.isWhitespace && !$0.isNewline }
@@ -292,10 +343,12 @@ struct ContentView: View {
         .animation(PanelMotion.stateAnimation, value: panelManager.isDragging)
         .onAppear {
             installUndoMonitor()
+            installSelectionKeyMonitor()
         }
         .onDisappear {
             removeEscapeMonitor()
             removeUndoMonitor()
+            removeSelectionKeyMonitor()
             stopAutoScrollLoop()
             settleTask?.cancel()
             settleTask = nil
@@ -304,6 +357,18 @@ struct ContentView: View {
         }
         .onChange(of: hasInputDraft) { _, hold in
             setInputHoverHold(hold)
+        }
+        .onChange(of: store.selectedListID) { _, _ in
+            clearSelection()
+        }
+        .onChange(of: store.visibleItems.map(\.id)) { _, ids in
+            guard !selectedItemIDs.isEmpty else { return }
+            let live = Set(ids)
+            guard !selectedItemIDs.isSubset(of: live) else { return }
+            selectedItemIDs = selectedItemIDs.intersection(live)
+            if let anchor = selectionAnchorID, !live.contains(anchor) {
+                selectionAnchorID = nil
+            }
         }
         .alert(
             deleteAlertTitle,
@@ -411,10 +476,15 @@ struct ContentView: View {
                 }
             }
 
-            if store.selectedListID != nil && !store.isSpecialListSelected {
+            if !selectedItemIDs.isEmpty {
+                bulkActionBar
+                    .transition(.opacity)
+            } else if store.selectedListID != nil && !store.isSpecialListSelected {
                 inputBar
+                    .transition(.opacity)
             }
         }
+        .animation(.easeOut(duration: 0.18), value: selectedItemIDs.isEmpty)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .liquidGlassContainer(spacing: 0)
     }
@@ -444,6 +514,7 @@ struct ContentView: View {
                         onDelete: { deleteList($0) },
                         onEmptyTrash: { emptyTrash() },
                         onSetIcon: { list, symbol in store.setListIcon(list, to: symbol) },
+                        onSetColor: { list, color in store.setListColor(list, to: color) },
                         onReorder: { from, to in store.moveList(from: from, to: to) },
                         onAutoFocusConsumed: { pendingAutoFocusListID = nil }
                     )
@@ -593,18 +664,27 @@ struct ContentView: View {
                             completedToggleButton(for: listID, count: currentCompletedItems.count)
 
                             if isCompletedExpanded(for: listID) {
-                                ForEach(currentCompletedItems) { item in
-                                    taskRow(item, isReorderEnabled: false)
-                                        .transition(.opacity.combined(with: .move(edge: .top)))
+                                let completed = currentCompletedItems
+                                ForEach(Array(completed.enumerated()), id: \.element.id) { idx, item in
+                                    taskRow(
+                                        item,
+                                        isReorderEnabled: false,
+                                        prevItemID: idx > 0 ? completed[idx - 1].id : nil,
+                                        nextItemID: idx < completed.count - 1 ? completed[idx + 1].id : nil
+                                    )
+                                    .transition(.opacity.combined(with: .move(edge: .top)))
                                 }
                             }
                         }
                     } else {
-                        ForEach(sortedItems) { item in
+                        let items = sortedItems
+                        ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
                             taskRow(
                                 item,
                                 subtitle: store.isSpecialListSelected ? store.sourceListName(for: item) : nil,
-                                isReorderEnabled: false
+                                isReorderEnabled: false,
+                                prevItemID: idx > 0 ? items[idx - 1].id : nil,
+                                nextItemID: idx < items.count - 1 ? items[idx + 1].id : nil
                             )
                             .transition(.opacity.combined(with: .move(edge: .top)))
                         }
@@ -667,7 +747,7 @@ struct ContentView: View {
             inlineEmptyState
         }
 
-        ForEach(items) { item in
+        ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
             if draggingID == item.id {
                 Color.clear
                     .frame(height: dragSession?.item.id == item.id ? (dragSession?.frozenRowHeight ?? RowMetrics.estimatedHeight) : (rowHeights[item.id] ?? RowMetrics.estimatedHeight))
@@ -679,8 +759,12 @@ struct ContentView: View {
                     .accessibilityHidden(true)
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
             } else {
-                taskRow(item)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                taskRow(
+                    item,
+                    prevItemID: idx > 0 ? items[idx - 1].id : nil,
+                    nextItemID: idx < items.count - 1 ? items[idx + 1].id : nil
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
     }
@@ -688,10 +772,14 @@ struct ContentView: View {
     private func taskRow(
         _ item: TodoItem,
         subtitle: String? = nil,
-        isReorderEnabled: Bool? = nil
+        isReorderEnabled: Bool? = nil,
+        prevItemID: UUID? = nil,
+        nextItemID: UUID? = nil
     ) -> some View {
         let isTrashItem = store.isTrashSelected
         let pendingToggleAnimation = pendingToggleAnimations[item.id]
+        let hasNeighborAbove = prevItemID.map { selectedItemIDs.contains($0) } ?? false
+        let hasNeighborBelow = nextItemID.map { selectedItemIDs.contains($0) } ?? false
         return TodoRowView(
             item: item,
             isTrashItem: isTrashItem,
@@ -733,7 +821,13 @@ struct ContentView: View {
                 }
             },
             isToggleEnabled: !isTrashItem && pendingToggleAnimation == nil && draggingID == nil,
-            isReorderEnabled: isReorderEnabled ?? !store.isSpecialListSelected
+            isReorderEnabled: isReorderEnabled ?? !store.isSpecialListSelected,
+            isSelected: selectedItemIDs.contains(item.id),
+            hasSelectedNeighborAbove: hasNeighborAbove,
+            hasSelectedNeighborBelow: hasNeighborBelow,
+            onSelect: { intent in
+                handleRowSelect(item, intent: intent)
+            }
         )
         .id(RowRenderIdentity(
             itemID: item.id,
@@ -782,6 +876,185 @@ struct ContentView: View {
         guard !trimmed.isEmpty else { return }
         store.add(title: trimmed)
         newTaskTitle = ""
+    }
+
+    // MARK: - Selection & bulk actions
+
+    private var selectedItems: [TodoItem] {
+        store.visibleItems.filter { selectedItemIDs.contains($0.id) }
+    }
+
+    private var bulkContext: BulkActionContext {
+        if store.isTrashSelected { return .trash }
+        if store.isCompletedSelected { return .completed }
+        return .regular
+    }
+
+    private func sharedSourceListID(for items: [TodoItem]) -> UUID? {
+        guard let first = items.first?.listID else { return nil }
+        return items.allSatisfy { $0.listID == first } ? first : nil
+    }
+
+    @ViewBuilder
+    private var bulkActionBar: some View {
+        let selected = selectedItems
+        let destinations = bulkContext == .trash ? [] : store.lists.filter { $0.id != sharedSourceListID(for: selected) }
+        BulkActionBar(
+            context: bulkContext,
+            anySelectedIsActive: selected.contains { !$0.isCompleted },
+            moveDestinations: destinations,
+            onToggleComplete: performBulkToggle,
+            onMoveTo: performBulkMove(to:),
+            onDelete: performBulkDelete,
+            onRestore: performBulkRestore,
+            onDeleteForever: performBulkDeleteForever,
+            onClear: clearSelection
+        )
+    }
+
+    private func handleRowSelect(_ item: TodoItem, intent: TodoRowSelectionIntent) {
+        switch intent {
+        case .replace:
+            selectedItemIDs = [item.id]
+            selectionAnchorID = item.id
+        case .toggle:
+            if selectedItemIDs.contains(item.id) {
+                selectedItemIDs.remove(item.id)
+                if selectionAnchorID == item.id {
+                    selectionAnchorID = selectedItemIDs.first
+                }
+            } else {
+                selectedItemIDs.insert(item.id)
+                selectionAnchorID = item.id
+            }
+        case .extendRange:
+            let visible = store.visibleItems
+            guard let anchorID = selectionAnchorID ?? selectedItemIDs.first,
+                  let anchorIdx = visible.firstIndex(where: { $0.id == anchorID }),
+                  let targetIdx = visible.firstIndex(where: { $0.id == item.id }) else {
+                selectedItemIDs = [item.id]
+                selectionAnchorID = item.id
+                return
+            }
+            let range = anchorIdx <= targetIdx ? anchorIdx...targetIdx : targetIdx...anchorIdx
+            let ids = visible[range].map(\.id)
+            selectedItemIDs.formUnion(ids)
+        }
+    }
+
+    private func clearSelection() {
+        selectedItemIDs = []
+        selectionAnchorID = nil
+    }
+
+    private func performBulkToggle() {
+        let items = selectedItems
+        guard !items.isEmpty else { return }
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+            store.toggleMany(items)
+        }
+        clearSelection()
+    }
+
+    private func performBulkDelete() {
+        let items = selectedItems
+        guard !items.isEmpty else { return }
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+            if store.isTrashSelected {
+                store.permanentlyDeleteMany(items)
+            } else {
+                store.moveManyToTrash(items)
+            }
+        }
+        clearSelection()
+    }
+
+    private func performBulkRestore() {
+        let items = selectedItems
+        guard !items.isEmpty else { return }
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+            store.restoreMany(items)
+        }
+        clearSelection()
+    }
+
+    private func performBulkDeleteForever() {
+        let items = selectedItems
+        guard !items.isEmpty else { return }
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+            store.permanentlyDeleteMany(items)
+        }
+        clearSelection()
+    }
+
+    private func performBulkMove(to targetListID: UUID) {
+        let items = selectedItems
+        guard !items.isEmpty else { return }
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+            store.moveItems(items, to: targetListID)
+        }
+        clearSelection()
+    }
+
+    private func installSelectionKeyMonitor() {
+        if selectionKeyMonitor != nil { return }
+        selectionKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
+            handleSelectionKeyEvent(event)
+        }
+    }
+
+    private func removeSelectionKeyMonitor() {
+        if let monitor = selectionKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+            selectionKeyMonitor = nil
+        }
+    }
+
+    private func isTextFieldFirstResponder() -> Bool {
+        guard let responder = NSApp.keyWindow?.firstResponder else { return false }
+        return responder is NSTextView || responder is NSTextField
+    }
+
+    private enum Key {
+        static let a: UInt16 = 0
+        static let delete: UInt16 = 51
+        static let forwardDelete: UInt16 = 117
+        static let space: UInt16 = 49
+        static let escape: UInt16 = 53
+        static let ret: UInt16 = 36
+    }
+
+    private func handleSelectionKeyEvent(_ event: NSEvent) -> NSEvent? {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let isCmdOnly = modifiers == .command
+        let isBare = modifiers.isEmpty
+
+        if event.keyCode == Key.a && isCmdOnly {
+            guard !isTextFieldFirstResponder(), !store.visibleItems.isEmpty else { return event }
+            selectedItemIDs = Set(store.visibleItems.map(\.id))
+            selectionAnchorID = store.visibleItems.first?.id
+            return nil
+        }
+
+        guard !selectedItemIDs.isEmpty, !isTextFieldFirstResponder() else { return event }
+
+        let toggleOrRestore: () -> Void = { [self] in
+            store.isTrashSelected ? performBulkRestore() : performBulkToggle()
+        }
+
+        switch (event.keyCode, isBare, isCmdOnly) {
+        case (Key.escape, _, _):
+            clearSelection()
+        case (Key.delete, true, _), (Key.forwardDelete, true, _):
+            performBulkDelete()
+        case (Key.space, true, _):
+            toggleOrRestore()
+        case (Key.ret, _, true):
+            toggleOrRestore()
+        default:
+            return event
+        }
+        return nil
     }
 
     private var collapsedGlyph: some View {
