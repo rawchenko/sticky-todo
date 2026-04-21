@@ -92,6 +92,7 @@
 				F10000000000000000000005 /* Sources */,
 				F10000000000000000000006 /* Frameworks */,
 				F10000000000000000000007 /* Resources */,
+				F10000000000000000000020 /* Refresh LaunchServices icon */,
 			);
 			buildRules = (
 			);
@@ -185,6 +186,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		F10000000000000000000020 /* Refresh LaunchServices icon */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Refresh LaunchServices icon";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "APP=\"${BUILT_PRODUCTS_DIR}/${WRAPPER_NAME}\"\nLS=\"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister\"\n\"$LS\" -f \"$APP\" >/dev/null 2>&1 || true\ntouch \"$APP\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		F10000000000000000000005 /* Sources */ = {
@@ -340,6 +363,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FloatList/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -366,6 +390,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FloatList/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
