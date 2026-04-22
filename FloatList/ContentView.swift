@@ -256,6 +256,7 @@ struct ContentView: View {
     @StateObject private var taskListScrollController = TaskListScrollController()
     @State private var pendingToggleAnimations: [UUID: PendingToggleAnimation] = [:]
     @State private var newTaskTitle = ""
+    @State private var inputPlaceholder: String = ContentView.randomPlaceholder(excluding: nil)
     @State private var dismissedRecoveryNoticeID: UUID?
     @State private var dragSession: DragSession?
     @State private var rowHeights: [UUID: CGFloat] = [:]
@@ -862,7 +863,7 @@ struct ContentView: View {
         HStack(alignment: .bottom, spacing: 10) {
             AutoGrowingInputField(
                 text: $newTaskTitle,
-                placeholder: sortedItems.isEmpty ? "What's your first task?" : "What's next?",
+                placeholder: inputPlaceholder,
                 font: NSFont.systemFont(ofSize: tweaks.bodyTextSize),
                 textColor: NSColor(FloatListTheme.textPrimary),
                 placeholderColor: .placeholderTextColor,
@@ -896,6 +897,35 @@ struct ContentView: View {
         guard !trimmed.isEmpty else { return }
         store.add(title: trimmed)
         newTaskTitle = ""
+        inputPlaceholder = ContentView.randomPlaceholder(excluding: inputPlaceholder)
+    }
+
+    private static let placeholderVariants: [String] = [
+        "What's on your mind?",
+        "Capture a thought…",
+        "Jot it down…",
+        "One more thing to do…",
+        "Type, then fly ↑",
+        "Add to the pile…",
+        "Brain dump here…",
+        "Today I will…",
+        "Don't let it slip…",
+        "Something to remember?",
+        "Next up…",
+        "Stick it here…",
+        "Quick note?",
+        "Before you forget…",
+        "Drop a task…",
+        "What needs doing?",
+        "Whisper it to me…",
+        "New todo, who dis?",
+        "Scribble something…",
+        "Tap, type, tackle…"
+    ]
+
+    private static func randomPlaceholder(excluding current: String?) -> String {
+        let pool = placeholderVariants.filter { $0 != current }
+        return pool.randomElement() ?? placeholderVariants[0]
     }
 
     // MARK: - Selection & bulk actions
