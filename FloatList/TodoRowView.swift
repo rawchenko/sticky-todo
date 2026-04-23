@@ -711,18 +711,21 @@ struct TodoRowView: View {
         action: @escaping () -> Void
     ) -> some View {
         let displayProgress = isInteractive ? 1 : progress
+        let iconReveal = min(1, max(0, (width - tweaks.rowHorizontalPadding) / tweaks.checkboxSize))
         let pill = ZStack(alignment: alignment) {
             RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous)
                 .fill(color.opacity(displayProgress))
             Image(systemName: systemImage)
                 .foregroundStyle(.white)
                 .font(.system(size: tweaks.actionIconSize + 4, weight: .semibold))
-                .scaleEffect(hasCommittedHaptic ? 1.18 : 1.0)
+                .scaleEffect((hasCommittedHaptic ? 1.18 : 1.0) * iconReveal)
+                .opacity(Double(iconReveal))
                 .frame(width: tweaks.checkboxSize)
                 .padding(.leading, alignment == .leading ? tweaks.rowHorizontalPadding : 0)
                 .padding(.trailing, alignment == .trailing ? tweaks.rowHorizontalPadding : 0)
         }
         .frame(width: width)
+        .clipShape(RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous))
         .brightness(hasCommittedHaptic ? 0.08 : 0)
         .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hasCommittedHaptic)
         .contentShape(Rectangle())
