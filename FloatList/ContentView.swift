@@ -493,7 +493,7 @@ struct ContentView: View {
             if !selectedItemIDs.isEmpty {
                 bulkActionBar
                     .transition(.opacity)
-            } else if store.selectedListID != nil && !store.isSpecialListSelected {
+            } else if store.selectedListID != nil && !store.isSpecialListSelected && !store.isReadOnly {
                 inputBar
                     .transition(.opacity)
             }
@@ -509,7 +509,7 @@ struct ContentView: View {
                 if shouldShowNoListsEmptyState {
                     HStack(alignment: .top, spacing: 6) {
                         EmptyListHeaderPill(action: createList)
-                            .disabled(!onboarding.allowsNewListAction)
+                            .disabled(!onboarding.allowsNewListAction || store.isReadOnly)
                         Spacer(minLength: 0)
                     }
                 } else {
@@ -564,6 +564,7 @@ struct ContentView: View {
     }
 
     private func createList() {
+        guard !store.isReadOnly else { return }
         withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
             let newList = store.addList(name: TodoList.defaultName)
             pendingAutoFocusListID = newList.id
@@ -571,6 +572,7 @@ struct ContentView: View {
     }
 
     private func deleteList(_ list: TodoList) {
+        guard !store.isReadOnly else { return }
         listPendingDeletion = list
     }
 
@@ -582,6 +584,7 @@ struct ContentView: View {
     }
 
     private func emptyTrash() {
+        guard !store.isReadOnly else { return }
         isShowingEmptyTrashAlert = true
     }
 
@@ -908,6 +911,7 @@ struct ContentView: View {
     }
 
     private func submitTask() {
+        guard !store.isReadOnly else { return }
         guard onboarding.allowsNewTodoInput else { return }
         let trimmed = newTaskTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }

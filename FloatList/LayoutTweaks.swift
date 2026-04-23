@@ -48,6 +48,46 @@ final class LayoutTweaks: ObservableObject, @unchecked Sendable {
         static let addListIconSize: CGFloat = 12
     }
 
+    // Keep in sync with TweakSlider ranges in LayoutSettingsView (SettingsView.swift).
+    enum Ranges {
+        static let panelCornerRadius: ClosedRange<CGFloat> = 0...40
+        static let handleCornerRadius: ClosedRange<CGFloat> = 0...40
+        static let collapsedWidth: ClosedRange<CGFloat> = 32...96
+        static let collapsedHeight: ClosedRange<CGFloat> = 32...160
+        static let expandedWidth: ClosedRange<CGFloat> = 280...520
+        static let expandedHeight: ClosedRange<CGFloat> = 400...800
+        static let edgeInset: ClosedRange<CGFloat> = 0...32
+
+        static let contentHorizontalPadding: ClosedRange<CGFloat> = 0...32
+        static let contentTopPadding: ClosedRange<CGFloat> = 0...32
+        static let contentBottomPadding: ClosedRange<CGFloat> = 0...32
+        static let rowSpacing: ClosedRange<CGFloat> = 0...16
+
+        static let inputCornerRadius: ClosedRange<CGFloat> = 0...32
+        static let inputLeadingPadding: ClosedRange<CGFloat> = 0...32
+        static let inputTrailingPadding: ClosedRange<CGFloat> = 0...32
+        static let inputVerticalPadding: ClosedRange<CGFloat> = 0...24
+
+        static let rowCornerRadius: ClosedRange<CGFloat> = 0...24
+        static let rowHorizontalPadding: ClosedRange<CGFloat> = 0...24
+        static let rowVerticalPadding: ClosedRange<CGFloat> = 0...24
+        static let rowInnerSpacing: ClosedRange<CGFloat> = 0...24
+
+        static let bodyTextSize: ClosedRange<CGFloat> = 11...20
+        static let secondaryTextSize: ClosedRange<CGFloat> = 10...18
+        static let checkboxSize: ClosedRange<CGFloat> = 14...28
+        static let actionIconSize: ClosedRange<CGFloat> = 9...18
+        static let listIconSize: ClosedRange<CGFloat> = 10...22
+
+        static let pillCornerRadius: ClosedRange<CGFloat> = 0...24
+        static let pillHorizontalPadding: ClosedRange<CGFloat> = 0...24
+        static let pillVerticalPadding: ClosedRange<CGFloat> = 0...16
+        static let pillSpacing: ClosedRange<CGFloat> = 0...16
+
+        static let checkmarkSize: ClosedRange<CGFloat> = 6...16
+        static let addListIconSize: ClosedRange<CGFloat> = 8...20
+    }
+
     private enum Keys {
         static let panelCornerRadius = "floatlist.layout.panelCornerRadius"
         static let handleCornerRadius = "floatlist.layout.handleCornerRadius"
@@ -129,42 +169,42 @@ final class LayoutTweaks: ObservableObject, @unchecked Sendable {
 
     private init() {
         let d = UserDefaults.standard
-        panelCornerRadius = Self.read(Keys.panelCornerRadius, default: Defaults.panelCornerRadius, from: d)
-        handleCornerRadius = Self.read(Keys.handleCornerRadius, default: Defaults.handleCornerRadius, from: d)
-        collapsedWidth = Self.read(Keys.collapsedWidth, default: Defaults.collapsedWidth, from: d)
-        collapsedHeight = Self.read(Keys.collapsedHeight, default: Defaults.collapsedHeight, from: d)
-        expandedWidth = Self.read(Keys.expandedWidth, default: Defaults.expandedWidth, from: d)
-        expandedHeight = Self.read(Keys.expandedHeight, default: Defaults.expandedHeight, from: d)
-        edgeInset = Self.read(Keys.edgeInset, default: Defaults.edgeInset, from: d)
+        panelCornerRadius = Self.read(Keys.panelCornerRadius, default: Defaults.panelCornerRadius, range: Ranges.panelCornerRadius, from: d)
+        handleCornerRadius = Self.read(Keys.handleCornerRadius, default: Defaults.handleCornerRadius, range: Ranges.handleCornerRadius, from: d)
+        collapsedWidth = Self.read(Keys.collapsedWidth, default: Defaults.collapsedWidth, range: Ranges.collapsedWidth, from: d)
+        collapsedHeight = Self.read(Keys.collapsedHeight, default: Defaults.collapsedHeight, range: Ranges.collapsedHeight, from: d)
+        expandedWidth = Self.read(Keys.expandedWidth, default: Defaults.expandedWidth, range: Ranges.expandedWidth, from: d)
+        expandedHeight = Self.read(Keys.expandedHeight, default: Defaults.expandedHeight, range: Ranges.expandedHeight, from: d)
+        edgeInset = Self.read(Keys.edgeInset, default: Defaults.edgeInset, range: Ranges.edgeInset, from: d)
 
-        contentHorizontalPadding = Self.read(Keys.contentHorizontalPadding, default: Defaults.contentHorizontalPadding, from: d)
-        contentTopPadding = Self.read(Keys.contentTopPadding, default: Defaults.contentTopPadding, from: d)
-        contentBottomPadding = Self.read(Keys.contentBottomPadding, default: Defaults.contentBottomPadding, from: d)
-        rowSpacing = Self.read(Keys.rowSpacing, default: Defaults.rowSpacing, from: d)
+        contentHorizontalPadding = Self.read(Keys.contentHorizontalPadding, default: Defaults.contentHorizontalPadding, range: Ranges.contentHorizontalPadding, from: d)
+        contentTopPadding = Self.read(Keys.contentTopPadding, default: Defaults.contentTopPadding, range: Ranges.contentTopPadding, from: d)
+        contentBottomPadding = Self.read(Keys.contentBottomPadding, default: Defaults.contentBottomPadding, range: Ranges.contentBottomPadding, from: d)
+        rowSpacing = Self.read(Keys.rowSpacing, default: Defaults.rowSpacing, range: Ranges.rowSpacing, from: d)
 
-        inputCornerRadius = Self.read(Keys.inputCornerRadius, default: Defaults.inputCornerRadius, from: d)
-        inputLeadingPadding = Self.read(Keys.inputLeadingPadding, default: Defaults.inputLeadingPadding, from: d)
-        inputTrailingPadding = Self.read(Keys.inputTrailingPadding, default: Defaults.inputTrailingPadding, from: d)
-        inputVerticalPadding = Self.read(Keys.inputVerticalPadding, default: Defaults.inputVerticalPadding, from: d)
+        inputCornerRadius = Self.read(Keys.inputCornerRadius, default: Defaults.inputCornerRadius, range: Ranges.inputCornerRadius, from: d)
+        inputLeadingPadding = Self.read(Keys.inputLeadingPadding, default: Defaults.inputLeadingPadding, range: Ranges.inputLeadingPadding, from: d)
+        inputTrailingPadding = Self.read(Keys.inputTrailingPadding, default: Defaults.inputTrailingPadding, range: Ranges.inputTrailingPadding, from: d)
+        inputVerticalPadding = Self.read(Keys.inputVerticalPadding, default: Defaults.inputVerticalPadding, range: Ranges.inputVerticalPadding, from: d)
 
-        rowCornerRadius = Self.read(Keys.rowCornerRadius, default: Defaults.rowCornerRadius, from: d)
-        rowHorizontalPadding = Self.read(Keys.rowHorizontalPadding, default: Defaults.rowHorizontalPadding, from: d)
-        rowVerticalPadding = Self.read(Keys.rowVerticalPadding, default: Defaults.rowVerticalPadding, from: d)
-        rowInnerSpacing = Self.read(Keys.rowInnerSpacing, default: Defaults.rowInnerSpacing, from: d)
+        rowCornerRadius = Self.read(Keys.rowCornerRadius, default: Defaults.rowCornerRadius, range: Ranges.rowCornerRadius, from: d)
+        rowHorizontalPadding = Self.read(Keys.rowHorizontalPadding, default: Defaults.rowHorizontalPadding, range: Ranges.rowHorizontalPadding, from: d)
+        rowVerticalPadding = Self.read(Keys.rowVerticalPadding, default: Defaults.rowVerticalPadding, range: Ranges.rowVerticalPadding, from: d)
+        rowInnerSpacing = Self.read(Keys.rowInnerSpacing, default: Defaults.rowInnerSpacing, range: Ranges.rowInnerSpacing, from: d)
 
-        bodyTextSize = Self.read(Keys.bodyTextSize, default: Defaults.bodyTextSize, from: d)
-        secondaryTextSize = Self.read(Keys.secondaryTextSize, default: Defaults.secondaryTextSize, from: d)
-        checkboxSize = Self.read(Keys.checkboxSize, default: Defaults.checkboxSize, from: d)
-        actionIconSize = Self.read(Keys.actionIconSize, default: Defaults.actionIconSize, from: d)
-        listIconSize = Self.read(Keys.listIconSize, default: Defaults.listIconSize, from: d)
+        bodyTextSize = Self.read(Keys.bodyTextSize, default: Defaults.bodyTextSize, range: Ranges.bodyTextSize, from: d)
+        secondaryTextSize = Self.read(Keys.secondaryTextSize, default: Defaults.secondaryTextSize, range: Ranges.secondaryTextSize, from: d)
+        checkboxSize = Self.read(Keys.checkboxSize, default: Defaults.checkboxSize, range: Ranges.checkboxSize, from: d)
+        actionIconSize = Self.read(Keys.actionIconSize, default: Defaults.actionIconSize, range: Ranges.actionIconSize, from: d)
+        listIconSize = Self.read(Keys.listIconSize, default: Defaults.listIconSize, range: Ranges.listIconSize, from: d)
 
-        pillCornerRadius = Self.read(Keys.pillCornerRadius, default: Defaults.pillCornerRadius, from: d)
-        pillHorizontalPadding = Self.read(Keys.pillHorizontalPadding, default: Defaults.pillHorizontalPadding, from: d)
-        pillVerticalPadding = Self.read(Keys.pillVerticalPadding, default: Defaults.pillVerticalPadding, from: d)
-        pillSpacing = Self.read(Keys.pillSpacing, default: Defaults.pillSpacing, from: d)
+        pillCornerRadius = Self.read(Keys.pillCornerRadius, default: Defaults.pillCornerRadius, range: Ranges.pillCornerRadius, from: d)
+        pillHorizontalPadding = Self.read(Keys.pillHorizontalPadding, default: Defaults.pillHorizontalPadding, range: Ranges.pillHorizontalPadding, from: d)
+        pillVerticalPadding = Self.read(Keys.pillVerticalPadding, default: Defaults.pillVerticalPadding, range: Ranges.pillVerticalPadding, from: d)
+        pillSpacing = Self.read(Keys.pillSpacing, default: Defaults.pillSpacing, range: Ranges.pillSpacing, from: d)
 
-        checkmarkSize = Self.read(Keys.checkmarkSize, default: Defaults.checkmarkSize, from: d)
-        addListIconSize = Self.read(Keys.addListIconSize, default: Defaults.addListIconSize, from: d)
+        checkmarkSize = Self.read(Keys.checkmarkSize, default: Defaults.checkmarkSize, range: Ranges.checkmarkSize, from: d)
+        addListIconSize = Self.read(Keys.addListIconSize, default: Defaults.addListIconSize, range: Ranges.addListIconSize, from: d)
     }
 
     func resetToDefaults() {
@@ -206,9 +246,12 @@ final class LayoutTweaks: ObservableObject, @unchecked Sendable {
         addListIconSize = Defaults.addListIconSize
     }
 
-    private static func read(_ key: String, default fallback: CGFloat, from defaults: UserDefaults) -> CGFloat {
+    private static func read(_ key: String, default fallback: CGFloat, range: ClosedRange<CGFloat>, from defaults: UserDefaults) -> CGFloat {
         guard defaults.object(forKey: key) != nil else { return fallback }
-        return CGFloat(defaults.double(forKey: key))
+        let raw = CGFloat(defaults.double(forKey: key))
+        // Protects against corrupted defaults with NaN/infinity that would break AppKit window sizing.
+        guard raw.isFinite else { return fallback }
+        return min(max(raw, range.lowerBound), range.upperBound)
     }
 
     private func persist(_ value: CGFloat, _ key: String) {
