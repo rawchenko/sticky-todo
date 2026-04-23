@@ -16,6 +16,13 @@ private enum PanelHover {
     static let bufferExitPollInterval: TimeInterval = 0.1
 }
 
+private enum GhostMetrics {
+    /// Small buffer around the ghost shape so the system liquid-glass
+    /// material's own soft shadow has room to render without clipping at
+    /// the NSPanel edge. The shape itself still centers on the snap target.
+    static let glowPadding: CGFloat = 8
+}
+
 final class HoverTrackingHostingView<Content: View>: NSHostingView<Content> {
     var onHoverChange: ((Bool) -> Void)?
     private var trackingArea: NSTrackingArea?
@@ -217,8 +224,13 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     private func makeGhostPanel() -> NSPanel {
+        let pad = GhostMetrics.glowPadding
+        let paddedSize = NSSize(
+            width: collapsedSize.width + pad * 2,
+            height: collapsedSize.height + pad * 2
+        )
         let ghost = NSPanel(
-            contentRect: NSRect(origin: .zero, size: collapsedSize),
+            contentRect: NSRect(origin: .zero, size: paddedSize),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -651,7 +663,11 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
               ghost.isVisible || isDragging,
               let panel,
               let screen = bestScreen(for: panel.frame) ?? NSScreen.main else { return }
+        // Inflate around the snap target so the outer halo can render
+        // outside the 48×48 shape without being clipped. The shape itself
+        // still centers on the exact snap position.
         let target = predictedSnapFrame(for: panel.frame, on: screen)
+            .insetBy(dx: -GhostMetrics.glowPadding, dy: -GhostMetrics.glowPadding)
         let current = ghost.frame
         // Animate large jumps (edge swap, vertical-zone change) but track
         // small continuous motion instantly so the ghost doesn't lag behind
@@ -862,16 +878,58 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     }
 }
 
+/// Mirrors the Paper "Ghost UI" artboard: a soft glassy rounded square with a
+/// dark inset ring, a 2pt bright inner rim, and a diffuse white outer halo.
+/// Exact values taken from `get_computed_styles` on the design's Rectangle.
 private struct GhostView: View {
     @ObservedObject private var tweaks = LayoutTweaks.shared
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: tweaks.handleCornerRadius, style: .continuous)
-        ZStack {
-            shape.fill(Color.accentColor.opacity(0.18))
-            shape.strokeBorder(Color.accentColor.opacity(0.9), lineWidth: 1.5)
+        // Paper ratio: 16px corner on a 48px square. Preserve that ratio if
+        // the user has tweaked the collapsed size in LayoutTweaks.
+        let minEdge = min(tweaks.collapsedWidth, tweaks.collapsedHeight)
+        let cornerRadius = minEdge * (16.0 / 48.0)
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        let s = minEdge / 48.0
+
+        shape
+            .fill(.clear)
+            .frame(width: tweaks.collapsedWidth, height: tweaks.collapsedHeight)
+            .modifier(GhostGlassModifier(shape: shape))
+            .overlay {
+                // Bright inner top rim — mimics light catching the curved
+                // upper edge of the glass.
+                shape.strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            .white.opacity(0.9),
+                            .white.opacity(0.25),
+                            .white.opacity(0.05),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 1 * s
+                )
+                .allowsHitTesting(false)
+            }
+            .opacity(0.6)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// Native Liquid Glass at `.clear` intensity with interactive highlighting —
+/// the most transparent system variant, no added tint darkening the content.
+/// Falls back to a subtle fill on macOS < 26.
+private struct GhostGlassModifier<S: Shape>: ViewModifier {
+    let shape: S
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.glassEffect(.clear.interactive(true), in: shape)
+        } else {
+            content.background(shape.fill(Color.white.opacity(0.08)))
         }
-        .compositingGroup()
-        .shadow(color: Color.black.opacity(0.22), radius: 6, x: 0, y: 2)
     }
 }
