@@ -16,6 +16,14 @@ private enum PanelHover {
     static let bufferExitPollInterval: TimeInterval = 0.1
 }
 
+private enum GhostMetrics {
+    /// Extra frame around the ghost's collapsed shape so the outer white halo
+    /// (Paper spec: `#FFFFFF66 0 0 18 3`, ≈21pt reach) isn't clipped by the
+    /// NSPanel bounds. The shape itself is still drawn at `collapsedSize`,
+    /// centered inside the padded panel.
+    static let glowPadding: CGFloat = 24
+}
+
 final class HoverTrackingHostingView<Content: View>: NSHostingView<Content> {
     var onHoverChange: ((Bool) -> Void)?
     private var trackingArea: NSTrackingArea?
@@ -217,8 +225,13 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     private func makeGhostPanel() -> NSPanel {
+        let pad = GhostMetrics.glowPadding
+        let paddedSize = NSSize(
+            width: collapsedSize.width + pad * 2,
+            height: collapsedSize.height + pad * 2
+        )
         let ghost = NSPanel(
-            contentRect: NSRect(origin: .zero, size: collapsedSize),
+            contentRect: NSRect(origin: .zero, size: paddedSize),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -651,7 +664,10 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
               ghost.isVisible || isDragging,
               let panel,
               let screen = bestScreen(for: panel.frame) ?? NSScreen.main else { return }
+        // Inflate around the snap target so the ghost panel can render its
+        // white outer halo outside the 48×48 shape without being clipped.
         let target = predictedSnapFrame(for: panel.frame, on: screen)
+            .insetBy(dx: -GhostMetrics.glowPadding, dy: -GhostMetrics.glowPadding)
         let current = ghost.frame
         // Animate large jumps (edge swap, vertical-zone change) but track
         // small continuous motion instantly so the ghost doesn't lag behind
@@ -862,16 +878,27 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     }
 }
 
+/// Mirrors the Paper "Ghost UI" artboard: a soft glassy rounded square with a
+/// dark inset ring, a 2pt bright inner rim, and a diffuse white outer halo.
+/// Exact values taken from `get_computed_styles` on the design's Rectangle.
 private struct GhostView: View {
     @ObservedObject private var tweaks = LayoutTweaks.shared
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: tweaks.handleCornerRadius, style: .continuous)
-        ZStack {
-            shape.fill(Color.accentColor.opacity(0.18))
-            shape.strokeBorder(Color.accentColor.opacity(0.9), lineWidth: 1.5)
-        }
-        .compositingGroup()
-        .shadow(color: Color.black.opacity(0.22), radius: 6, x: 0, y: 2)
+        // Paper ratio: 16px corner on a 48px square. Preserve that ratio if
+        // the user has tweaked the collapsed size in LayoutTweaks.
+        let minEdge = min(tweaks.collapsedWidth, tweaks.collapsedHeight)
+        let cornerRadius = minEdge * (16.0 / 48.0)
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+
+        shape
+            .fill(
+                Color.white.opacity(0.2)
+                    .shadow(.inner(color: Color.black.opacity(0.12), radius: 3))
+                    .shadow(.inner(color: .white, radius: 1))
+            )
+            .frame(width: tweaks.collapsedWidth, height: tweaks.collapsedHeight)
+            .shadow(color: Color.white.opacity(0.4), radius: 9)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
