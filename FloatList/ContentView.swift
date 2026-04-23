@@ -77,7 +77,7 @@ private struct TaskListScrollAccessor: NSViewRepresentable {
     }
 }
 
-private struct AddListButton: View {
+private struct EmptyListHeaderPill: View {
     var action: () -> Void
 
     @State private var isHovering = false
@@ -85,20 +85,28 @@ private struct AddListButton: View {
     @ObservedObject private var tweaks = LayoutTweaks.shared
 
     var body: some View {
-        Button(action: action) {
+        HStack(spacing: tweaks.pillSpacing) {
             Image(systemName: "plus")
-                .font(.system(size: tweaks.addListIconSize, weight: .medium))
-                .foregroundStyle(FloatListTheme.textSecondary)
-                .frame(width: 22, height: 18)
-                .contentShape(Rectangle())
+                .font(.system(size: tweaks.listIconSize, weight: .semibold))
+                .foregroundStyle(FloatListTheme.textPrimary)
+
+            Text("New list")
+                .font(.system(size: tweaks.bodyTextSize, weight: .medium))
+                .foregroundStyle(FloatListTheme.textPrimary)
+                .lineLimit(1)
         }
-        .buttonStyle(.plain)
-        .pointerCursor(.pointingHand)
-        .background(WindowDragBlocker())
-        .scaleEffect(isPressed ? 0.9 : 1.0)
-        .opacity(isHovering ? 1 : 0.72)
-        .animation(.easeOut(duration: 0.15), value: isHovering)
+        .padding(.horizontal, tweaks.pillHorizontalPadding)
+        .padding(.vertical, tweaks.pillVerticalPadding)
+        .background(
+            RoundedRectangle(cornerRadius: tweaks.pillCornerRadius, style: .continuous)
+                .fill(isHovering ? FloatListTheme.rowHover : FloatListTheme.controlFill)
+                .animation(.easeOut(duration: 0.15), value: isHovering)
+        )
+        .scaleEffect(isPressed ? 0.96 : 1.0)
         .animation(.spring(response: 0.22, dampingFraction: 0.7), value: isPressed)
+        .contentShape(RoundedRectangle(cornerRadius: tweaks.pillCornerRadius, style: .continuous))
+        .background(WindowDragBlocker())
+        .pointerCursor(.pointingHand)
         .onHover { hovering in
             isHovering = hovering
             if !hovering { isPressed = false }
@@ -106,6 +114,10 @@ private struct AddListButton: View {
         .onLongPressGesture(minimumDuration: .infinity, maximumDistance: 6, perform: {}) { pressing in
             isPressed = pressing
         }
+        .onTapGesture(perform: action)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Create new list")
+        .accessibilityAddTraits(.isButton)
     }
 }
 
@@ -495,12 +507,8 @@ struct ContentView: View {
             Group {
                 if shouldShowNoListsEmptyState {
                     HStack(alignment: .top, spacing: 6) {
-                        Text("No lists yet")
-                            .font(.system(size: tweaks.secondaryTextSize))
-                            .foregroundStyle(FloatListTheme.textSecondary)
-                            .padding(.horizontal, 4)
+                        EmptyListHeaderPill(action: createList)
                         Spacer(minLength: 0)
-                        AddListButton(action: createList)
                     }
                 } else {
                     ListsDropdownView(
@@ -580,31 +588,57 @@ struct ContentView: View {
     }
 
     private var noListsEmptyState: some View {
-        VStack(spacing: 8) {
-            Text("Create a list to get started.")
-                .font(.system(size: 22, weight: .regular, design: .serif).italic())
-                .tracking(-0.4)
-                .foregroundStyle(FloatListTheme.textPrimary.opacity(0.95))
-                .multilineTextAlignment(.center)
-
-            Text("Tap + above to add one.")
-                .font(.system(size: 13))
+        VStack(alignment: .leading, spacing: 16) {
+            Image("EmptyStateArrow")
+                .renderingMode(.template)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 26, height: 52)
                 .foregroundStyle(FloatListTheme.textSecondary)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Click here")
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("to add first")
+                    HStack(alignment: .firstTextBaseline, spacing: 3) {
+                        Image("MenuBarGlyph")
+                            .renderingMode(.template)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 18, height: 18)
+                            .foregroundStyle(FloatListTheme.textSecondary)
+                            .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 2 }
+                        Text("list")
+                            .overlay(alignment: .bottom) {
+                                Image("EmptyStateUnderline")
+                                    .renderingMode(.template)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 52, height: 16)
+                                    .foregroundStyle(FloatListTheme.textSecondary)
+                                    .offset(y: 14)
+                            }
+                    }
+                }
+            }
+            .font(.system(size: 20, weight: .semibold, design: .rounded))
+            .foregroundStyle(FloatListTheme.textSecondary)
+
+            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.leading, 20)
+        .padding(.trailing, 16)
+        .padding(.top, 4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Text("Start anywhere.")
-                .font(.system(size: 28, weight: .regular, design: .serif).italic())
-                .tracking(-0.56)
-                .foregroundStyle(FloatListTheme.textPrimary.opacity(0.95))
-
-            Text(hasInputDraft ? "Press ⏎ to add" : "Type a task below")
-                .font(.system(size: tweaks.bodyTextSize))
+        let restCopy = isInboxFirstRun ? "Start with one thing" : "Start typing\nto create a new item"
+        return VStack(spacing: 0) {
+            Text(hasInputDraft ? "Press ⏎ to add" : restCopy)
+                .font(.system(size: tweaks.bodyTextSize).italic())
                 .foregroundStyle(FloatListTheme.textSecondary)
+                .multilineTextAlignment(.center)
         }
         .opacity(hasInputDraft ? 0.42 : 0.7)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1187,6 +1221,10 @@ struct ContentView: View {
 
     private var shouldShowNoListsEmptyState: Bool {
         store.lists.isEmpty && !store.isSpecialListSelected && !store.hasCompletedItems && !store.hasTrashedItems
+    }
+
+    private var isInboxFirstRun: Bool {
+        store.selectedListID == TodoList.inboxID && store.items.isEmpty
     }
 
     private var selectedRegularListID: UUID? {
