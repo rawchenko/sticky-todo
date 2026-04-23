@@ -187,6 +187,46 @@ class TodoStore: ObservableObject {
         save()
     }
 
+    // MARK: - Import
+
+    /// Merges items from another store into this one. Used by the
+    /// Alt Onboarding flow to migrate tasks created in the temporary
+    /// in-memory store into the user's real Inbox. Preserves completion
+    /// and trash state; trashed items retain their trashID listing and
+    /// point their `trashedOriginalListID` back at the real Inbox so
+    /// the Restore action works as expected.
+    ///
+    /// No-op when `incoming` is empty, so it's safe to call on close
+    /// even if the user didn't add anything.
+    func importOnboardingItems(_ incoming: [TodoItem]) {
+        guard !incoming.isEmpty else { return }
+        let inboxID = TodoList.inboxID
+        let inboxName = TodoList.inboxName
+
+        captureUndoSnapshot()
+        // The default-inbox seeding only runs on a completely empty
+        // store — a user who deleted the Inbox before onboarding would
+        // end up with orphaned items whose listID points at a list
+        // that isn't in the sidebar. Re-create the Inbox in that case
+        // so migrated tasks are actually reachable.
+        if !lists.contains(where: { $0.id == inboxID }) {
+            lists.insert(TodoList(id: inboxID, name: inboxName), at: 0)
+        }
+        for source in incoming {
+            var copy = source
+            if source.isTrashed {
+                // Keep trash placement but repoint origin to real Inbox.
+                copy.trashedOriginalListID = inboxID
+                copy.trashedOriginalListName = inboxName
+            } else {
+                // Route everything else (active + completed) into Inbox.
+                copy.listID = inboxID
+            }
+            items.append(copy)
+        }
+        save()
+    }
+
     // MARK: - Todos
 
     func add(title: String) {

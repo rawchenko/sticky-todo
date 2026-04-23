@@ -315,7 +315,7 @@ private struct OnboardingSettingsView: View {
 
     @ViewBuilder
     private func altOnboardingSettingsContent() -> some View {
-        EmptyView()
+        AltOnboardingSettingsContent()
     }
 }
 

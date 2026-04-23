@@ -74,10 +74,27 @@ final class AppOnboardingPresenter {
 
     private func presentAltIfAvailable(
         variant _: OnboardingVariant,
-        realStore _: TodoStore?,
-        onComplete _: @escaping (Completion) -> Void,
-        onClose _: @escaping () -> Void
+        realStore: TodoStore?,
+        onComplete: @escaping (Completion) -> Void,
+        onClose: @escaping () -> Void
     ) -> Bool {
-        false
+        let presenter = AltOnboardingPresenter(realStore: realStore)
+        altPresenter = presenter
+        presenter.present(
+            onComplete: {
+                let screen = NSScreen.main
+                let anchor = EdgeAnchor(
+                    edge: .right,
+                    vertical: .top,
+                    anchorY: screen?.visibleFrame.maxY ?? 0
+                )
+                onComplete(.revealDocked(anchor))
+            },
+            onClose: { [weak self] in
+                self?.altPresenter = nil
+                onClose()
+            }
+        )
+        return true
     }
 }
