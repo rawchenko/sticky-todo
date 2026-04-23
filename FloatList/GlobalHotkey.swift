@@ -24,7 +24,7 @@ final class GlobalHotkey: ObservableObject {
         defaultModifiers: UInt32(controlKey | optionKey)
     )
 
-    /// Backward-compat alias for the original single-hotkey API.
+    /// Legacy alias for the single-hotkey API.
     static var shared: GlobalHotkey { toggleVisibility }
 
     @Published private(set) var keyCode: UInt32

@@ -50,18 +50,45 @@ final class TodoStoreTests: XCTestCase {
         XCTAssertEqual(store.selectedListID, list.id)
     }
 
-    func testMissingFileStartsEmptyWithoutRecoveryNotice() throws {
+    func testMissingFileStartsWithPrecreatedInboxAndNoRecoveryNotice() throws {
         let fileURL = try makeStoreFileURL()
 
         let store = TodoStore(fileURL: fileURL)
 
         XCTAssertTrue(store.items.isEmpty)
-        XCTAssertTrue(store.lists.isEmpty)
-        XCTAssertNil(store.selectedListID)
+        XCTAssertEqual(store.lists.map(\.id), [TodoList.inboxID])
+        XCTAssertEqual(store.lists.first?.name, TodoList.inboxName)
+        XCTAssertEqual(store.selectedListID, TodoList.inboxID)
         XCTAssertNil(store.recoveryNotice)
+
+        let persisted = try JSONDecoder().decode(TodoStoreFile.self, from: Data(contentsOf: fileURL))
+        XCTAssertEqual(persisted.lists.map(\.id), [TodoList.inboxID])
+        XCTAssertTrue(persisted.todos.isEmpty)
+        XCTAssertEqual(persisted.selectedListID, TodoList.inboxID)
     }
 
-    func testCorruptedJSONMovesUnreadableFileToBackupAndClearsItems() throws {
+    func testEmptyPersistedStoreIsNormalizedToInbox() throws {
+        let fileURL = try makeStoreFileURL()
+        let emptyFile = TodoStoreFile(
+            schemaVersion: TodoStore.currentSchemaVersion,
+            lists: [],
+            todos: [],
+            selectedListID: nil
+        )
+        try JSONEncoder().encode(emptyFile).write(to: fileURL, options: .atomic)
+
+        let store = TodoStore(fileURL: fileURL)
+
+        XCTAssertEqual(store.lists.map(\.id), [TodoList.inboxID])
+        XCTAssertTrue(store.items.isEmpty)
+        XCTAssertEqual(store.selectedListID, TodoList.inboxID)
+
+        let persisted = try JSONDecoder().decode(TodoStoreFile.self, from: Data(contentsOf: fileURL))
+        XCTAssertEqual(persisted.lists.map(\.id), [TodoList.inboxID])
+        XCTAssertEqual(persisted.selectedListID, TodoList.inboxID)
+    }
+
+    func testCorruptedJSONMovesUnreadableFileToBackupAndPrecreatesInbox() throws {
         let fileURL = try makeStoreFileURL()
         let corruptedContents = "{ definitely not json".data(using: .utf8)!
         try corruptedContents.write(to: fileURL, options: .atomic)
@@ -71,10 +98,10 @@ final class TodoStoreTests: XCTestCase {
         let backupURL = try XCTUnwrap(notice.backupURL)
 
         XCTAssertTrue(store.items.isEmpty)
-        XCTAssertTrue(store.lists.isEmpty)
-        XCTAssertNil(store.selectedListID)
+        XCTAssertEqual(store.lists.map(\.id), [TodoList.inboxID])
+        XCTAssertEqual(store.selectedListID, TodoList.inboxID)
         XCTAssertTrue(notice.message.contains("backup was saved"))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: backupURL.path))
         XCTAssertEqual(try Data(contentsOf: backupURL), corruptedContents)
     }
@@ -95,7 +122,7 @@ final class TodoStoreTests: XCTestCase {
 
         let reloaded = try JSONDecoder().decode(TodoStoreFile.self, from: Data(contentsOf: fileURL))
         XCTAssertEqual(reloaded.todos.map(\.title), ["Recovered task"])
-        XCTAssertEqual(reloaded.lists.map(\.name), ["Tasks"])
+        XCTAssertEqual(reloaded.lists.map(\.name), [TodoList.inboxName, "Tasks"])
         XCTAssertEqual(try Data(contentsOf: backupURL), corruptedContents)
     }
 
@@ -112,21 +139,21 @@ final class TodoStoreTests: XCTestCase {
     func testAddTodoWithNoSelectedListIsIgnored() throws {
         let fileURL = try makeStoreFileURL()
         let store = TodoStore(fileURL: fileURL)
+        store.selectList(nil)
 
         store.add(title: "Orphan")
 
         XCTAssertTrue(store.items.isEmpty)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
     }
 
-    func testAddListAppendsAndSelectsNewList() throws {
+    func testAddListAppendsAfterInboxAndSelectsNewList() throws {
         let fileURL = try makeStoreFileURL()
         let store = TodoStore(fileURL: fileURL)
 
         let first = store.addList(name: "Work")
         let second = store.addList(name: "Home")
 
-        XCTAssertEqual(store.lists.map(\.name), ["Work", "Home"])
+        XCTAssertEqual(store.lists.map(\.name), [TodoList.inboxName, "Work", "Home"])
         XCTAssertEqual(store.selectedListID, second.id)
         XCTAssertNotEqual(first.id, second.id)
     }
@@ -215,8 +242,11 @@ final class TodoStoreTests: XCTestCase {
         store.selectList(work.id)
         store.deleteList(work)
 
-        XCTAssertEqual(store.lists.map(\.name), ["Home"])
-        XCTAssertEqual(store.selectedListID, home.id)
+        XCTAssertEqual(store.lists.map(\.name), [TodoList.inboxName, "Home"])
+        XCTAssertEqual(store.selectedListID, TodoList.inboxID)
+        XCTAssertTrue(store.visibleItems.isEmpty)
+
+        store.selectList(home.id)
         XCTAssertEqual(store.visibleItems.map(\.title), ["Home A"])
 
         store.selectList(TodoList.trashID)
@@ -227,10 +257,12 @@ final class TodoStoreTests: XCTestCase {
     func testDeleteLastListLeavesZeroRegularListsAndSelectsTrash() throws {
         let fileURL = try makeStoreFileURL()
         let store = TodoStore(fileURL: fileURL)
+        let inbox = try XCTUnwrap(store.lists.first)
         let only = store.addList(name: "Tasks")
         store.add(title: "Solo")
 
         store.deleteList(only)
+        store.deleteList(inbox)
 
         XCTAssertTrue(store.lists.isEmpty)
         XCTAssertEqual(store.selectedListID, TodoList.trashID)
@@ -263,7 +295,7 @@ final class TodoStoreTests: XCTestCase {
 
         store.renameList(list, to: "Workshop")
 
-        XCTAssertEqual(store.lists.first?.name, "Workshop")
+        XCTAssertEqual(store.lists.first(where: { $0.id == list.id })?.name, "Workshop")
     }
 
     func testMoveTodoWithinFilteredListPreservesOtherLists() throws {
@@ -388,8 +420,9 @@ final class TodoStoreTests: XCTestCase {
         let trashedItem = try XCTUnwrap(store.visibleItems.first)
         store.restore(trashedItem)
 
-        XCTAssertEqual(store.lists.map(\.name), ["Work"])
-        XCTAssertEqual(store.items.first?.listID, store.lists.first?.id)
+        let restoredList = try XCTUnwrap(store.lists.last)
+        XCTAssertEqual(restoredList.name, "Work")
+        XCTAssertEqual(store.items.first?.listID, restoredList.id)
         XCTAssertEqual(store.items.first?.title, "Bring back")
     }
 
@@ -551,11 +584,12 @@ final class TodoStoreTests: XCTestCase {
         _ = store.addList(name: "B")
         _ = store.addList(name: "C")
 
-        store.moveList(from: 0, to: 2)
-        XCTAssertEqual(store.lists.map(\.name), ["B", "C", "A"])
+        // [Inbox, A, B, C] — move A down past C.
+        store.moveList(from: 1, to: 3)
+        XCTAssertEqual(store.lists.map(\.name), [TodoList.inboxName, "B", "C", "A"])
 
-        store.moveList(from: 2, to: 0)
-        XCTAssertEqual(store.lists.map(\.name), ["A", "B", "C"])
+        store.moveList(from: 3, to: 1)
+        XCTAssertEqual(store.lists.map(\.name), [TodoList.inboxName, "A", "B", "C"])
     }
 
     func testMoveListWithInvalidIndicesIsNoop() throws {
@@ -582,19 +616,20 @@ final class TodoStoreTests: XCTestCase {
         let fileURL = try makeStoreFileURL()
         let store = TodoStore(fileURL: fileURL)
         let list = store.addList(name: "Work", icon: "star")
+        let lookup = { store.lists.first(where: { $0.id == list.id })?.icon }
 
         store.setListIcon(list, to: "")
-        XCTAssertEqual(store.lists.first?.icon, "star")
+        XCTAssertEqual(lookup(), "star")
 
         store.setListIcon(list, to: "   \n\t  ")
-        XCTAssertEqual(store.lists.first?.icon, "star")
+        XCTAssertEqual(lookup(), "star")
 
         // Non-SF-Symbol values (e.g. legacy emoji) are rejected.
         store.setListIcon(list, to: "🎯")
-        XCTAssertEqual(store.lists.first?.icon, "star")
+        XCTAssertEqual(lookup(), "star")
 
         store.setListIcon(list, to: "target")
-        XCTAssertEqual(store.lists.first?.icon, "target")
+        XCTAssertEqual(lookup(), "target")
     }
 
     func testTodoListSanitizesLegacyEmojiIconToDefault() throws {
@@ -653,7 +688,7 @@ final class TodoStoreTests: XCTestCase {
         XCTAssertTrue(store.canUndo) // addList snapshot still on stack
 
         store.undo()
-        XCTAssertTrue(store.lists.isEmpty)
+        XCTAssertEqual(store.lists.map(\.id), [TodoList.inboxID])
         XCTAssertFalse(store.canUndo)
     }
 
@@ -694,11 +729,11 @@ final class TodoStoreTests: XCTestCase {
         store.add(title: "B")
 
         store.deleteList(list)
-        XCTAssertTrue(store.lists.isEmpty)
+        XCTAssertEqual(store.lists.map(\.id), [TodoList.inboxID])
         XCTAssertTrue(store.items.allSatisfy(\.isTrashed))
 
         store.undo()
-        XCTAssertEqual(store.lists.map(\.name), ["Work"])
+        XCTAssertEqual(store.lists.map(\.name), [TodoList.inboxName, "Work"])
         XCTAssertFalse(store.items.contains(where: \.isTrashed))
         XCTAssertEqual(store.items.map(\.title).sorted(), ["A", "B"])
     }
@@ -726,6 +761,53 @@ final class TodoStoreTests: XCTestCase {
         XCTAssertEqual(store.items.count, 10)
     }
 
+    // MARK: - Precreated Inbox first-run flow
+
+    func testFirstTaskGoesIntoPrecreatedInboxAsNormalAdd() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+
+        XCTAssertEqual(store.selectedListID, TodoList.inboxID)
+
+        store.add(title: "Buy milk")
+
+        XCTAssertEqual(store.lists.map(\.id), [TodoList.inboxID])
+        XCTAssertEqual(store.items.map(\.title), ["Buy milk"])
+        XCTAssertEqual(store.items.first?.listID, TodoList.inboxID)
+
+        let persisted = try JSONDecoder().decode(TodoStoreFile.self, from: Data(contentsOf: fileURL))
+        XCTAssertEqual(persisted.lists.map(\.id), [TodoList.inboxID])
+        XCTAssertEqual(persisted.todos.map(\.title), ["Buy milk"])
+        XCTAssertEqual(persisted.selectedListID, TodoList.inboxID)
+        XCTAssertEqual(persisted.todos.first?.listID, TodoList.inboxID)
+    }
+
+    func testUndoAfterFirstTaskKeepsInboxAndRemovesOnlyTheTask() throws {
+        let store = TodoStore(fileURL: try makeStoreFileURL())
+        XCTAssertFalse(store.canUndo)
+
+        store.add(title: "Buy milk")
+        XCTAssertTrue(store.canUndo)
+
+        store.undo()
+
+        XCTAssertEqual(store.lists.map(\.id), [TodoList.inboxID])
+        XCTAssertTrue(store.items.isEmpty)
+        XCTAssertEqual(store.selectedListID, TodoList.inboxID)
+        XCTAssertFalse(store.canUndo)
+    }
+
+    func testInboxReturnsAfterReloadingPersistedFile() throws {
+        let fileURL = try makeStoreFileURL()
+        _ = TodoStore(fileURL: fileURL)
+
+        let reopened = TodoStore(fileURL: fileURL)
+
+        XCTAssertEqual(reopened.lists.map(\.id), [TodoList.inboxID])
+        XCTAssertEqual(reopened.selectedListID, TodoList.inboxID)
+        XCTAssertTrue(reopened.items.isEmpty)
+    }
+
     func testSelectListDoesNotPolluteUndoStack() throws {
         let store = TodoStore(fileURL: try makeStoreFileURL())
         let a = store.addList(name: "A")
@@ -737,9 +819,9 @@ final class TodoStoreTests: XCTestCase {
         // addList snapshots pushed; selectList did not.
         // Undoing once should pop the most recent addList snapshot.
         store.undo()
-        XCTAssertEqual(store.lists.map(\.name), ["A"])
+        XCTAssertEqual(store.lists.map(\.name), [TodoList.inboxName, "A"])
         store.undo()
-        XCTAssertTrue(store.lists.isEmpty)
+        XCTAssertEqual(store.lists.map(\.id), [TodoList.inboxID])
         XCTAssertFalse(store.canUndo)
     }
 

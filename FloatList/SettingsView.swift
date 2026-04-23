@@ -2,21 +2,23 @@ import SwiftUI
 
 struct SettingsView: View {
     fileprivate enum Tab: Hashable {
-        case general, layout, about
+        case general, layout, onboarding, about
 
         var title: String {
             switch self {
-            case .general: return "General"
-            case .layout:  return "Layout"
-            case .about:   return "About"
+            case .general:    return "General"
+            case .layout:     return "Layout"
+            case .onboarding: return "Onboarding"
+            case .about:      return "About"
             }
         }
 
         var systemImage: String {
             switch self {
-            case .general: return "gear"
-            case .layout:  return "rectangle.3.group"
-            case .about:   return "info.circle"
+            case .general:    return "gear"
+            case .layout:     return "rectangle.3.group"
+            case .onboarding: return "sparkles"
+            case .about:      return "info.circle"
             }
         }
     }
@@ -32,9 +34,10 @@ struct SettingsView: View {
 
             Group {
                 switch selection {
-                case .general: GeneralSettingsView()
-                case .layout:  LayoutSettingsView()
-                case .about:   AboutSettingsView()
+                case .general:    GeneralSettingsView()
+                case .layout:     LayoutSettingsView()
+                case .onboarding: OnboardingSettingsView()
+                case .about:      AboutSettingsView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -42,15 +45,17 @@ struct SettingsView: View {
         .frame(width: 520, height: 560)
         .background(WindowTitleUpdater(title: selection.title))
         .background(
-            // Hidden shortcut buttons: ⌘1 / ⌘2 / ⌘3 jump directly to each tab,
-            // matching the system Settings convention.
+            // Hidden shortcut buttons: ⌘1..⌘4 jump to each tab, matching the
+            // system Settings convention.
             VStack {
                 Button("") { selection = .general }
                     .keyboardShortcut("1", modifiers: .command)
                 Button("") { selection = .layout }
                     .keyboardShortcut("2", modifiers: .command)
-                Button("") { selection = .about }
+                Button("") { selection = .onboarding }
                     .keyboardShortcut("3", modifiers: .command)
+                Button("") { selection = .about }
+                    .keyboardShortcut("4", modifiers: .command)
             }
             .opacity(0)
             .frame(width: 0, height: 0)
@@ -80,6 +85,7 @@ private struct SettingsTabBar: View {
         HStack(spacing: 2) {
             tab(.general)
             tab(.layout)
+            tab(.onboarding)
             tab(.about)
         }
         .padding(.vertical, 8)
@@ -257,7 +263,7 @@ private struct LayoutSettingsView: View {
     }
 }
 
-private struct TweakSlider: View {
+struct TweakSlider: View {
     let label: String
     @Binding var value: CGFloat
     let range: ClosedRange<CGFloat>
@@ -272,9 +278,54 @@ private struct TweakSlider: View {
                 Text("\(Int(value))\(suffix)")
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
-                    .frame(width: 48, alignment: .trailing)
+                    .frame(width: 56, alignment: .trailing)
             }
         }
+    }
+}
+
+private struct OnboardingSettingsView: View {
+    private let selection = OnboardingConfiguration.activeSelection
+
+    var body: some View {
+        Form {
+            Section("Flow") {
+                LabeledContent("Active onboarding") {
+                    Text(selection.definition.displayName)
+                }
+                LabeledContent("Selection source") {
+                    Text(selection.source.title)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section {
+                HStack {
+                    Spacer()
+                    Button("Replay onboarding") {
+                        AppDelegate.shared?.restartOnboarding()
+                    }
+                }
+            }
+
+            if selection.definition.variant == OnboardingCatalog.classic.variant {
+                classicOnboardingSettingsContent()
+            }
+            if selection.definition.variant == OnboardingCatalog.immersive.variant {
+                immersiveOnboardingSettingsContent()
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    @ViewBuilder
+    private func classicOnboardingSettingsContent() -> some View {
+        ClassicOnboardingSettingsContent()
+    }
+
+    @ViewBuilder
+    private func immersiveOnboardingSettingsContent() -> some View {
+        ImmersiveOnboardingSettingsContent()
     }
 }
 
@@ -325,6 +376,14 @@ private struct GeneralSettingsView: View {
                         }
                     )
                     .frame(width: 200, height: 24)
+                }
+            }
+
+            Section {
+                LabeledContent("Onboarding") {
+                    Button("Show again") {
+                        AppDelegate.shared?.restartOnboarding()
+                    }
                 }
             }
         }

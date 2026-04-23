@@ -13,6 +13,7 @@ struct AutoGrowingInputField: NSViewRepresentable {
     var onCancel: (() -> Void)? = nil
     var onFocusChange: ((Bool) -> Void)? = nil
     var focusOnAppear: Bool = false
+    var isEditable: Bool = true
 
     func makeNSView(context: Context) -> NSScrollView {
         let textView = GrowingTextView()
@@ -27,8 +28,8 @@ struct AutoGrowingInputField: NSViewRepresentable {
         textView.drawsBackground = false
         textView.backgroundColor = .clear
         textView.isRichText = false
-        textView.isEditable = true
-        textView.isSelectable = true
+        textView.isEditable = isEditable
+        textView.isSelectable = isEditable
         textView.allowsUndo = true
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
@@ -75,6 +76,10 @@ struct AutoGrowingInputField: NSViewRepresentable {
         if textView.maxLines != maxLines {
             textView.maxLines = maxLines
             textView.invalidateIntrinsicContentSize()
+        }
+        if textView.isEditable != isEditable {
+            textView.isEditable = isEditable
+            textView.isSelectable = isEditable
         }
         let desiredInset = NSSize(width: 0, height: verticalInset)
         if textView.textContainerInset != desiredInset {

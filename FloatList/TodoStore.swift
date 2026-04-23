@@ -35,14 +35,18 @@ class TodoStore: ObservableObject {
 
     private let fileURL: URL
     private let fileManager: FileManager
+    private let inMemory: Bool
     private var isStorageWritable = true
     private var isBatching = false
 
-    init(fileURL: URL? = nil, fileManager: FileManager = .default) {
+    init(fileURL: URL? = nil, fileManager: FileManager = .default, inMemory: Bool = false) {
         self.fileManager = fileManager
         self.fileURL = fileURL ?? Self.defaultFileURL(fileManager: fileManager)
-        let directoryURL = self.fileURL.deletingLastPathComponent()
-        try? fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
+        self.inMemory = inMemory
+        if !inMemory {
+            let directoryURL = self.fileURL.deletingLastPathComponent()
+            try? fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
+        }
         load()
     }
 
@@ -97,7 +101,9 @@ class TodoStore: ObservableObject {
     }
 
     func load() {
-        guard fileManager.fileExists(atPath: fileURL.path) else {
+        defer { ensureDefaultInboxIfEmpty() }
+
+        if inMemory || !fileManager.fileExists(atPath: fileURL.path) {
             items = []
             lists = []
             selectedListID = nil
@@ -125,7 +131,21 @@ class TodoStore: ObservableObject {
         }
     }
 
+    /// Populate a fresh/empty store with a default `Inbox` so the app always
+    /// boots into a valid state with a selected regular list. Runs outside the
+    /// undo stack so ordinary `undo()` can never strip the precreated list.
+    private func ensureDefaultInboxIfEmpty() {
+        guard isStorageWritable else { return }
+        guard lists.isEmpty, items.isEmpty else { return }
+
+        let inbox = TodoList(id: TodoList.inboxID, name: TodoList.inboxName)
+        lists.append(inbox)
+        selectedListID = inbox.id
+        save()
+    }
+
     func save() {
+        guard !inMemory else { return }
         guard isStorageWritable else { return }
         guard !isBatching else { return }
         let file = TodoStoreFile(
@@ -164,6 +184,46 @@ class TodoStore: ObservableObject {
         selectedListID = snapshot.selectedListID
         let stillHasHistory = !undoStack.isEmpty
         if canUndo != stillHasHistory { canUndo = stillHasHistory }
+        save()
+    }
+
+    // MARK: - Import
+
+    /// Merges items from another store into this one. Used by the
+    /// Immersive onboarding flow to migrate tasks created in the temporary
+    /// in-memory store into the user's real Inbox. Preserves completion
+    /// and trash state; trashed items retain their trashID listing and
+    /// point their `trashedOriginalListID` back at the real Inbox so
+    /// the Restore action works as expected.
+    ///
+    /// No-op when `incoming` is empty, so it's safe to call on close
+    /// even if the user didn't add anything.
+    func importOnboardingItems(_ incoming: [TodoItem]) {
+        guard !incoming.isEmpty else { return }
+        let inboxID = TodoList.inboxID
+        let inboxName = TodoList.inboxName
+
+        captureUndoSnapshot()
+        // The default-inbox seeding only runs on a completely empty
+        // store — a user who deleted the Inbox before onboarding would
+        // end up with orphaned items whose listID points at a list
+        // that isn't in the sidebar. Re-create the Inbox in that case
+        // so migrated tasks are actually reachable.
+        if !lists.contains(where: { $0.id == inboxID }) {
+            lists.insert(TodoList(id: inboxID, name: inboxName), at: 0)
+        }
+        for source in incoming {
+            var copy = source
+            if source.isTrashed {
+                // Keep trash placement but repoint origin to real Inbox.
+                copy.trashedOriginalListID = inboxID
+                copy.trashedOriginalListName = inboxName
+            } else {
+                // Route everything else (active + completed) into Inbox.
+                copy.listID = inboxID
+            }
+            items.append(copy)
+        }
         save()
     }
 

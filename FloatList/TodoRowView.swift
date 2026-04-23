@@ -375,6 +375,7 @@ struct TodoRowView: View {
     @State private var isEditing = false
     @State private var hasActivatedReorderGesture = false
     @ObservedObject private var tweaks = LayoutTweaks.shared
+    @EnvironmentObject private var onboarding: OnboardingMode
 
     private enum SwipeRestSide { case leading, trailing }
 
@@ -457,21 +458,25 @@ struct TodoRowView: View {
         .offset(x: swipeOffset)
         .background(swipeRevealLayer)
         .background(
-            TwoFingerSwipeDetector(
-                onBegan: {
-                    swipeBase = swipeOffset
-                    swipeRest = nil
-                    hasCommittedHaptic = abs(swipeOffset) >= commitThreshold
-                },
-                onChanged: { total in applySwipeOffset(total) },
-                onEnded: { _, predicted in handleSwipeEnd(predictedEnd: predicted) },
-                onCancelled: {
-                    withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-                        swipeOffset = 0
-                    }
-                    resetSwipeState()
+            Group {
+                if onboarding.allowsRowSwipe {
+                    TwoFingerSwipeDetector(
+                        onBegan: {
+                            swipeBase = swipeOffset
+                            swipeRest = nil
+                            hasCommittedHaptic = abs(swipeOffset) >= commitThreshold
+                        },
+                        onChanged: { total in applySwipeOffset(total) },
+                        onEnded: { _, predicted in handleSwipeEnd(predictedEnd: predicted) },
+                        onCancelled: {
+                            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                                swipeOffset = 0
+                            }
+                            resetSwipeState()
+                        }
+                    )
                 }
-            )
+            }
         )
         .background(
             GeometryReader { geo in
@@ -490,7 +495,7 @@ struct TodoRowView: View {
         )
         .contentShape(Rectangle())
         .onTapGesture {
-            guard !isEditing else { return }
+            guard !isEditing, onboarding.allowsSelectionShortcuts else { return }
             let flags = NSEvent.modifierFlags
             let intent: TodoRowSelectionIntent
             if flags.contains(.shift) {
@@ -536,50 +541,52 @@ struct TodoRowView: View {
             if !isEditing { draftTitle = new }
         }
         .contextMenu {
-            let isBulk = bulkSelectionCount > 1
-            let countLabel = isBulk ? "\(bulkSelectionCount) Items" : nil
-            if isTrashItem {
-                if let onRestore {
-                    Button {
-                        onRestore()
-                    } label: {
-                        Label(countLabel.map { "Restore \($0)" } ?? "Restore", systemImage: "arrow.uturn.backward")
-                    }
-                }
-                Divider()
-                Button(role: .destructive) {
-                    onDelete()
-                } label: {
-                    Label(countLabel.map { "Delete \($0) Forever" } ?? "Delete Forever", systemImage: "trash")
-                }
-            } else {
-                let markComplete = isBulk ? bulkAnyActive : !item.isCompleted
-                Button {
-                    onToggle()
-                } label: {
-                    let suffix = markComplete ? "Complete" : "Incomplete"
-                    let title = countLabel.map { "Mark \($0) \(suffix)" } ?? "Mark \(suffix)"
-                    Label(title, systemImage: markComplete ? "checkmark.circle" : "circle")
-                }
-                if !moveDestinations.isEmpty {
-                    Divider()
-                    Menu {
-                        ForEach(moveDestinations) { list in
-                            Button {
-                                onMoveToList(list.id)
-                            } label: {
-                                Label(list.name, systemImage: list.icon)
-                            }
+            if onboarding.allowsRowContextMenu {
+                let isBulk = bulkSelectionCount > 1
+                let countLabel = isBulk ? "\(bulkSelectionCount) Items" : nil
+                if isTrashItem {
+                    if let onRestore {
+                        Button {
+                            onRestore()
+                        } label: {
+                            Label(countLabel.map { "Restore \($0)" } ?? "Restore", systemImage: "arrow.uturn.backward")
                         }
-                    } label: {
-                        Label(countLabel.map { "Move \($0) to…" } ?? "Move to…", systemImage: "folder")
                     }
-                }
-                Divider()
-                Button(role: .destructive) {
-                    onDelete()
-                } label: {
-                    Label(countLabel.map { "Delete \($0)" } ?? "Delete", systemImage: "trash")
+                    Divider()
+                    Button(role: .destructive) {
+                        onDelete()
+                    } label: {
+                        Label(countLabel.map { "Delete \($0) Forever" } ?? "Delete Forever", systemImage: "trash")
+                    }
+                } else {
+                    let markComplete = isBulk ? bulkAnyActive : !item.isCompleted
+                    Button {
+                        onToggle()
+                    } label: {
+                        let suffix = markComplete ? "Complete" : "Incomplete"
+                        let title = countLabel.map { "Mark \($0) \(suffix)" } ?? "Mark \(suffix)"
+                        Label(title, systemImage: markComplete ? "checkmark.circle" : "circle")
+                    }
+                    if !moveDestinations.isEmpty {
+                        Divider()
+                        Menu {
+                            ForEach(moveDestinations) { list in
+                                Button {
+                                    onMoveToList(list.id)
+                                } label: {
+                                    Label(list.name, systemImage: list.icon)
+                                }
+                            }
+                        } label: {
+                            Label(countLabel.map { "Move \($0) to…" } ?? "Move to…", systemImage: "folder")
+                        }
+                    }
+                    Divider()
+                    Button(role: .destructive) {
+                        onDelete()
+                    } label: {
+                        Label(countLabel.map { "Delete \($0)" } ?? "Delete", systemImage: "trash")
+                    }
                 }
             }
         }
@@ -635,7 +642,7 @@ struct TodoRowView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .contentShape(Rectangle())
                     .onTapGesture(count: 2) {
-                        guard !isTrashItem else { return }
+                        guard !isTrashItem, onboarding.allowsRowEditing else { return }
                         isEditing = true
                     }
             }
@@ -651,6 +658,17 @@ struct TodoRowView: View {
         }
         .toggleStyle(TodoCheckboxToggleStyle())
         .allowsHitTesting(isToggleEnabled && !isDragActive)
+        .overlay(checkboxPulseHalo)
+    }
+
+    /// Radar-style pulsing ring that draws the eye to a specific
+    /// checkbox during onboarding. Driven by `OnboardingMode.pulsingCheckboxItemID`
+    /// so only one row pulses at a time; the rest look normal.
+    @ViewBuilder
+    private var checkboxPulseHalo: some View {
+        if onboarding.pulsingCheckboxItemID == item.id {
+            OnboardingCheckboxPulse()
+        }
     }
 
     private var swipeRevealLayer: some View {
@@ -944,5 +962,37 @@ struct TodoRowDragPreview: View {
         .clipShape(RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous))
         .compositingGroup()
         .shadow(color: FloatListTheme.panelShadow(opacity: 0.2), radius: 18, y: 10)
+    }
+}
+
+/// Radar-ping pulse used by the onboarding to point at a checkbox the
+/// user should tap. Two offset waves give a continuous rhythm (one is
+/// always ramping in while the other is fading out).
+struct OnboardingCheckboxPulse: View {
+    @State private var t: CGFloat = 0.0
+
+    private let cycle: Double = 1.40
+
+    var body: some View {
+        ZStack {
+            ring(phase: 0.0)
+            ring(phase: 0.5)
+        }
+        .allowsHitTesting(false)
+        .onAppear {
+            withAnimation(.linear(duration: cycle).repeatForever(autoreverses: false)) {
+                t = 1.0
+            }
+        }
+    }
+
+    private func ring(phase: CGFloat) -> some View {
+        // Triangle-wave offset so the two rings stay out of phase.
+        let raw = t + phase
+        let progress = raw - floor(raw) // 0..1
+        return Circle()
+            .stroke(FloatListTheme.success, lineWidth: 2)
+            .scaleEffect(1.0 + 1.1 * progress)
+            .opacity(Double(1.0 - progress) * 0.85)
     }
 }
