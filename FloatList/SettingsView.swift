@@ -310,7 +310,7 @@ private struct OnboardingSettingsView: View {
 
     @ViewBuilder
     private func originalOnboardingSettingsContent() -> some View {
-        EmptyView()
+        OriginalOnboardingSettingsContent()
     }
 
     @ViewBuilder

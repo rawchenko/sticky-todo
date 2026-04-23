@@ -55,10 +55,21 @@ final class AppOnboardingPresenter {
     private func presentOriginalIfAvailable(
         variant _: OnboardingVariant,
         realStore _: TodoStore?,
-        onComplete _: @escaping (Completion) -> Void,
-        onClose _: @escaping () -> Void
+        onComplete: @escaping (Completion) -> Void,
+        onClose: @escaping () -> Void
     ) -> Bool {
-        false
+        let presenter = OriginalOnboardingPresenter()
+        originalPresenter = presenter
+        presenter.present(
+            onComplete: { origin in
+                onComplete(.showPanel(flyInFrom: origin))
+            },
+            onClose: { [weak self] in
+                self?.originalPresenter = nil
+                onClose()
+            }
+        )
+        return true
     }
 
     private func presentAltIfAvailable(
