@@ -747,6 +747,13 @@ struct ContentView: View {
                         )
                 }
             )
+            .background(
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if !selectedItemIDs.isEmpty { clearSelection() }
+                    }
+            )
 
             if let dragSession {
                 dragOverlay(for: dragSession)
@@ -985,8 +992,12 @@ struct ContentView: View {
     private func handleRowSelect(_ item: TodoItem, intent: TodoRowSelectionIntent) {
         switch intent {
         case .replace:
-            selectedItemIDs = [item.id]
-            selectionAnchorID = item.id
+            if selectedItemIDs == [item.id] {
+                clearSelection()
+            } else {
+                selectedItemIDs = [item.id]
+                selectionAnchorID = item.id
+            }
         case .toggle:
             if selectedItemIDs.contains(item.id) {
                 selectedItemIDs.remove(item.id)
