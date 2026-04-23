@@ -258,6 +258,11 @@ struct TodoCheckboxToggleStyle: ToggleStyle {
 
 private struct TodoCheckboxGlyph: View {
     let isChecked: Bool
+    var animatesChanges: Bool = true
+
+    @State private var hasAppeared = false
+    @State private var displayChecked = false
+    @ObservedObject private var tweaks = LayoutTweaks.shared
 
     private var strokeColor: Color {
         Color.dynamic(
@@ -268,20 +273,48 @@ private struct TodoCheckboxGlyph: View {
 
     var body: some View {
         ZStack {
-            if isChecked {
-                Circle()
-                    .fill(FloatListTheme.success)
-                    .frame(width: LayoutTweaks.shared.checkboxSize, height: LayoutTweaks.shared.checkboxSize)
-                Image(systemName: "checkmark")
-                    .font(.system(size: LayoutTweaks.shared.checkmarkSize, weight: .bold))
-                    .foregroundStyle(Color.white)
-            } else {
-                Circle()
-                    .strokeBorder(strokeColor, lineWidth: 1.5)
-                    .frame(width: LayoutTweaks.shared.checkboxSize, height: LayoutTweaks.shared.checkboxSize)
-            }
+            // Empty ring — fades out as the filled circle pops in
+            Circle()
+                .strokeBorder(strokeColor, lineWidth: 1.5)
+                .frame(width: tweaks.checkboxSize, height: tweaks.checkboxSize)
+                .opacity(displayChecked ? 0 : 1)
+                .scaleEffect(displayChecked ? 0.6 : 1)
+
+            // Filled success circle — bounces up
+            Circle()
+                .fill(FloatListTheme.success)
+                .frame(width: tweaks.checkboxSize, height: tweaks.checkboxSize)
+                .scaleEffect(displayChecked ? 1.0 : 0.2)
+                .opacity(displayChecked ? 1 : 0)
+
+            // Checkmark glyph — pops with a slight rotation for energy
+            Image(systemName: "checkmark")
+                .font(.system(size: tweaks.checkmarkSize, weight: .bold))
+                .foregroundStyle(Color.white)
+                .scaleEffect(displayChecked ? 1.0 : 0.0)
+                .opacity(displayChecked ? 1 : 0)
+                .rotationEffect(.degrees(displayChecked ? 0 : -60))
         }
         .frame(width: 18, height: 18)
+        .onAppear {
+            displayChecked = isChecked
+            hasAppeared = true
+        }
+        .onChange(of: isChecked) { _, newValue in
+            guard animatesChanges, hasAppeared else {
+                displayChecked = newValue
+                return
+            }
+            if newValue {
+                withAnimation(.spring(response: 0.34, dampingFraction: 0.55)) {
+                    displayChecked = true
+                }
+            } else {
+                withAnimation(.spring(response: 0.30, dampingFraction: 0.85)) {
+                    displayChecked = false
+                }
+            }
+        }
     }
 }
 
@@ -374,6 +407,7 @@ struct TodoRowView: View {
     @State private var rowWidth: CGFloat = 0
     @State private var isEditing = false
     @State private var hasActivatedReorderGesture = false
+    @State private var rippleID: UUID? = nil
     @ObservedObject private var tweaks = LayoutTweaks.shared
     @EnvironmentObject private var onboarding: OnboardingMode
 
@@ -652,13 +686,23 @@ struct TodoRowView: View {
     private var checkbox: some View {
         Toggle(isOn: Binding(
             get: { displayedIsCompleted },
-            set: { _ in onToggle() }
+            set: { _ in
+                if !displayedIsCompleted { rippleID = UUID() }
+                onToggle()
+            }
         )) {
             EmptyView()
         }
         .toggleStyle(TodoCheckboxToggleStyle())
         .allowsHitTesting(isToggleEnabled && !isDragActive)
         .overlay(checkboxPulseHalo)
+        .overlay {
+            if let rippleID {
+                CompletionRipple(seed: rippleID)
+                    .id(rippleID)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
     /// Radar-style pulsing ring that draws the eye to a specific
@@ -996,3 +1040,25 @@ struct OnboardingCheckboxPulse: View {
             .opacity(Double(1.0 - progress) * 0.85)
     }
 }
+
+/// Single expanding green ring that pulses out of the checkbox once
+/// when a task is checked off. The seed (a fresh UUID per trigger) makes
+/// the SwiftUI identity change so a new ripple is created per completion.
+struct CompletionRipple: View {
+    let seed: UUID
+    @State private var progress: CGFloat = 0
+
+    var body: some View {
+        Circle()
+            .stroke(FloatListTheme.success, lineWidth: max(0.5, 2.0 * (1 - progress)))
+            .frame(width: LayoutTweaks.shared.checkboxSize, height: LayoutTweaks.shared.checkboxSize)
+            .scaleEffect(1.0 + progress * 1.6)
+            .opacity(Double(1 - progress))
+            .animation(.easeOut(duration: 0.55), value: progress)
+            .onAppear {
+                // Defer so the .animation modifier picks up the change.
+                DispatchQueue.main.async { progress = 1 }
+            }
+    }
+}
+
