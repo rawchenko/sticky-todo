@@ -4,6 +4,71 @@ import AppKit
 private let escapeKeyCode: UInt16 = 53
 private let undoKeyCode: UInt16 = 6   // kVK_ANSI_Z
 
+private struct TaskListOutsideClickDetector: NSViewRepresentable {
+    var isActive: Bool
+    var isPointInsideRow: (CGPoint) -> Bool
+    var onOutside: () -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = DetectorView()
+        view.onOutside = onOutside
+        view.isPointInsideRow = isPointInsideRow
+        view.setActive(isActive)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        guard let view = nsView as? DetectorView else { return }
+        view.onOutside = onOutside
+        view.isPointInsideRow = isPointInsideRow
+        view.setActive(isActive)
+    }
+
+    private final class DetectorView: NSView {
+        var onOutside: (() -> Void)?
+        var isPointInsideRow: ((CGPoint) -> Bool)?
+        private var monitor: Any?
+        private var active = false
+
+        override var mouseDownCanMoveWindow: Bool { false }
+        override var isFlipped: Bool { true }
+
+        func setActive(_ newValue: Bool) {
+            guard newValue != active else { return }
+            active = newValue
+            if active, window != nil { install() } else { remove() }
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window == nil { remove() } else if active { install() }
+        }
+
+        deinit { remove() }
+
+        private func install() {
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
+                guard let self, let window = self.window else { return event }
+                guard event.window === window else { return event }
+                if !event.modifierFlags.intersection([.shift, .command, .control]).isEmpty { return event }
+                let pointInView = self.convert(event.locationInWindow, from: nil)
+                guard self.bounds.contains(pointInView) else { return event }
+                if self.isPointInsideRow?(pointInView) == true { return event }
+                self.onOutside?()
+                return event
+            }
+        }
+
+        private func remove() {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+                self.monitor = nil
+            }
+        }
+    }
+}
+
 private struct TaskListViewportPreferenceKey: PreferenceKey {
     static var defaultValue: CGRect = .zero
 
@@ -500,6 +565,13 @@ struct ContentView: View {
         }
         .animation(.easeOut(duration: 0.18), value: selectedItemIDs.isEmpty)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if !selectedItemIDs.isEmpty { clearSelection() }
+                }
+        )
         .liquidGlassContainer(spacing: 0)
     }
 
@@ -752,13 +824,22 @@ struct ContentView: View {
                 dragOverlay(for: dragSession)
             }
         }
+        .background(
+            TaskListOutsideClickDetector(
+                isActive: !selectedItemIDs.isEmpty,
+                isPointInsideRow: { point in
+                    rowFrames.values.contains { $0.contains(point) }
+                },
+                onOutside: { clearSelection() }
+            )
+        )
         .coordinateSpace(name: "taskListContent")
         .coordinateSpace(name: "list")
         .onPreferenceChange(RowHeightPreferenceKey.self) { heights in
             rowHeights.merge(heights) { _, new in new }
         }
         .onPreferenceChange(RowFramePreferenceKey.self) { frames in
-            rowFrames.merge(frames) { _, new in new }
+            rowFrames = frames
             refreshDragSessionTarget(triggerHaptic: true)
         }
         .onPreferenceChange(TaskListViewportPreferenceKey.self) { viewport in
@@ -985,8 +1066,12 @@ struct ContentView: View {
     private func handleRowSelect(_ item: TodoItem, intent: TodoRowSelectionIntent) {
         switch intent {
         case .replace:
-            selectedItemIDs = [item.id]
-            selectionAnchorID = item.id
+            if selectedItemIDs == [item.id] {
+                clearSelection()
+            } else {
+                selectedItemIDs = [item.id]
+                selectionAnchorID = item.id
+            }
         case .toggle:
             if selectedItemIDs.contains(item.id) {
                 selectedItemIDs.remove(item.id)
