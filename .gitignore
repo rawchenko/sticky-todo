@@ -12,3 +12,5 @@ build/
 DerivedData/
 *.xcarchive/
 export/
+*.profraw
+output/
