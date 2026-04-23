@@ -716,10 +716,15 @@ struct TodoRowView: View {
     }
 
     private var swipeRevealLayer: some View {
-        HStack(spacing: 0) {
+        // Cap the reveal pill to the row's own width so that when
+        // `performSecondaryAction` slides the row off-screen by animating
+        // `swipeOffset` past `rowWidth`, the pill doesn't visibly grow
+        // wider than the row.
+        let maxPillWidth = max(0, rowWidth - tweaks.pillSpacing)
+        return HStack(spacing: 0) {
             if swipeOffset > 0 {
                 revealPill(
-                    width: max(0, swipeOffset - tweaks.pillSpacing),
+                    width: min(maxPillWidth, max(0, swipeOffset - tweaks.pillSpacing)),
                     progress: min(1, swipeOffset / commitThreshold),
                     color: isTrashItem ? FloatListTheme.controlFillStrong : FloatListTheme.success,
                     systemImage: isTrashItem ? "arrow.uturn.backward.circle.fill" : "checkmark.circle.fill",
@@ -731,7 +736,7 @@ struct TodoRowView: View {
             Spacer(minLength: 0)
             if swipeOffset < 0 {
                 revealPill(
-                    width: max(0, -swipeOffset - tweaks.pillSpacing),
+                    width: min(maxPillWidth, max(0, -swipeOffset - tweaks.pillSpacing)),
                     progress: min(1, -swipeOffset / commitThreshold),
                     color: FloatListTheme.destructive,
                     systemImage: "trash.circle.fill",
@@ -755,18 +760,21 @@ struct TodoRowView: View {
         action: @escaping () -> Void
     ) -> some View {
         let displayProgress = isInteractive ? 1 : progress
+        let iconReveal = min(1, max(0, (width - tweaks.rowHorizontalPadding) / tweaks.checkboxSize))
         let pill = ZStack(alignment: alignment) {
             RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous)
                 .fill(color.opacity(displayProgress))
             Image(systemName: systemImage)
                 .foregroundStyle(.white)
                 .font(.system(size: tweaks.actionIconSize + 4, weight: .semibold))
-                .scaleEffect(hasCommittedHaptic ? 1.18 : 1.0)
+                .scaleEffect((hasCommittedHaptic ? 1.18 : 1.0) * iconReveal)
+                .opacity(Double(iconReveal))
                 .frame(width: tweaks.checkboxSize)
                 .padding(.leading, alignment == .leading ? tweaks.rowHorizontalPadding : 0)
                 .padding(.trailing, alignment == .trailing ? tweaks.rowHorizontalPadding : 0)
         }
         .frame(width: width)
+        .clipShape(RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous))
         .brightness(hasCommittedHaptic ? 0.08 : 0)
         .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hasCommittedHaptic)
         .contentShape(Rectangle())
