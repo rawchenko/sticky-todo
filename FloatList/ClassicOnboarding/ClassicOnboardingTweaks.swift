@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Persisted tunables for onboarding typography, chip padding, progress bar,
 /// and step-advance spring. Card size and column layout are fixed.
-final class OnboardingTweaks: ObservableObject, @unchecked Sendable {
-    static let shared = OnboardingTweaks()
+final class ClassicOnboardingTweaks: ObservableObject, @unchecked Sendable {
+    static let shared = ClassicOnboardingTweaks()
 
     enum Defaults {
         // MARK: Instruction chip

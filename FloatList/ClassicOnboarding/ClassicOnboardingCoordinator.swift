@@ -1,16 +1,16 @@
 import SwiftUI
 
 @MainActor
-final class OnboardingCoordinator: ObservableObject {
+final class ClassicOnboardingCoordinator: ObservableObject {
     @Published private(set) var currentIndex: Int = 0
     private(set) var isComplete: Bool = false
-    let steps: [OnboardingStep]
+    let steps: [ClassicOnboardingStep]
 
-    init(steps: [OnboardingStep] = OnboardingStep.defaultFlow) {
+    init(steps: [ClassicOnboardingStep] = ClassicOnboardingStep.defaultFlow) {
         self.steps = steps
     }
 
-    var currentStep: OnboardingStep { steps[currentIndex] }
+    var currentStep: ClassicOnboardingStep { steps[currentIndex] }
     var isFirst: Bool { currentIndex == 0 }
     var isLast: Bool { currentIndex == steps.count - 1 }
 
@@ -20,14 +20,14 @@ final class OnboardingCoordinator: ObservableObject {
             complete()
             return
         }
-        withAnimation(OnboardingTweaks.shared.advanceSpring) {
+        withAnimation(ClassicOnboardingTweaks.shared.advanceSpring) {
             currentIndex += 1
         }
     }
 
     func back() {
         guard currentIndex > 0 else { return }
-        withAnimation(OnboardingTweaks.shared.advanceSpring) {
+        withAnimation(ClassicOnboardingTweaks.shared.advanceSpring) {
             currentIndex -= 1
         }
     }

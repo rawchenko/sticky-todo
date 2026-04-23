@@ -1,7 +1,7 @@
 import SwiftUI
 
-struct OriginalOnboardingSettingsContent: View {
-    @ObservedObject private var tweaks = OnboardingTweaks.shared
+struct ClassicOnboardingSettingsContent: View {
+    @ObservedObject private var tweaks = ClassicOnboardingTweaks.shared
 
     var body: some View {
         Section("Instruction chip") {

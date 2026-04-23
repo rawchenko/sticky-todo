@@ -1,11 +1,11 @@
 import AVFoundation
 import SwiftUI
 
-/// Plays the bundled ambient intro track for the Alt Onboarding
+/// Plays the bundled ambient intro track for the Immersive onboarding
 /// "first contact" scene. The track is loaded once at init and then
 /// scheduled on demand via `playIntro()`.
 @MainActor
-final class AltOnboardingAudio: ObservableObject {
+final class ImmersiveOnboardingAudio: ObservableObject {
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private let format: AVAudioFormat

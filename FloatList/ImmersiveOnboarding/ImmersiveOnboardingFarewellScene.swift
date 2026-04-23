@@ -13,10 +13,10 @@ import SwiftUI
 ///    confirmation chip ("You're all set") appears above and a primary
 ///    Continue button below. Only when the user presses Continue does
 ///    the panel fly to the top-right corner and the window closes.
-struct AltSceneFarewell: View {
+struct ImmersiveOnboardingFarewellScene: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @EnvironmentObject private var state: AltOnboardingState
+    @EnvironmentObject private var state: ImmersiveOnboardingState
     @ObservedObject private var tweaks = LayoutTweaks.shared
 
     var onFinish: () -> Void
@@ -99,7 +99,7 @@ struct AltSceneFarewell: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .altOnboardingChip(Capsule(style: .continuous))
+        .immersiveOnboardingChip(Capsule(style: .continuous))
         .allowsHitTesting(false)
     }
 
@@ -113,7 +113,7 @@ struct AltSceneFarewell: View {
         .foregroundStyle(.primary)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .altOnboardingChip(Capsule(style: .continuous))
+        .immersiveOnboardingChip(Capsule(style: .continuous))
         .allowsHitTesting(false)
     }
 

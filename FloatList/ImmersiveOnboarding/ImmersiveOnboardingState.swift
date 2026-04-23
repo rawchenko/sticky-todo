@@ -1,7 +1,7 @@
 import Combine
 import SwiftUI
 
-/// Shared state for the Alt Onboarding flow. Lives at the root-view level
+/// Shared state for the Immersive onboarding flow. Lives at the root-view level
 /// so it survives scene transitions — the TodoStore, PanelManager, and
 /// intro-animation progress all persist as the user moves from Scene 1
 /// (first contact) to Scene 2 (first capture) and beyond.
@@ -11,7 +11,7 @@ import SwiftUI
 /// completes, the values stay at their terminal states (orbit=1, dim=1,
 /// panelBirth=1, ignitionFlash=0) for the remainder of the onboarding.
 @MainActor
-final class AltOnboardingState: ObservableObject {
+final class ImmersiveOnboardingState: ObservableObject {
     /// In-memory store populated during the flow. Never touches the
     /// user's real TodoStore; at finish, tasks migrate to the real Inbox.
     let store: TodoStore

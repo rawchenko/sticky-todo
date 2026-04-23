@@ -29,17 +29,17 @@ private enum IntroTiming {
 
 /// Scene 1 — "First contact".
 /// Drives the intro animation choreography (background dim, halo bloom,
-/// panel birth) by mutating the shared `AltOnboardingState`. The halo
+/// panel birth) by mutating the shared `ImmersiveOnboardingState`. The halo
 /// and panel themselves are rendered by the root view, so they persist
 /// across scene transitions. Scene 1 only overlays the hint and
 /// greeting chips, and advances to Scene 2 once the greeting has
 /// settled.
-struct AltSceneFirstContact: View {
+struct ImmersiveOnboardingFirstContactScene: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @EnvironmentObject private var state: AltOnboardingState
-    @EnvironmentObject private var audio: AltOnboardingAudio
-    @EnvironmentObject private var coordinator: AltOnboardingCoordinator
+    @EnvironmentObject private var state: ImmersiveOnboardingState
+    @EnvironmentObject private var audio: ImmersiveOnboardingAudio
+    @EnvironmentObject private var coordinator: ImmersiveOnboardingCoordinator
     @ObservedObject private var tweaks = LayoutTweaks.shared
 
     @State private var hintVisible = false
@@ -86,7 +86,7 @@ struct AltSceneFirstContact: View {
             .foregroundStyle(.secondary)
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
-            .altOnboardingChip(Capsule(style: .continuous))
+            .immersiveOnboardingChip(Capsule(style: .continuous))
             .allowsHitTesting(false)
     }
 
@@ -100,7 +100,7 @@ struct AltSceneFirstContact: View {
         .foregroundStyle(.primary)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .altOnboardingChip(Capsule(style: .continuous))
+        .immersiveOnboardingChip(Capsule(style: .continuous))
         .allowsHitTesting(false)
     }
 

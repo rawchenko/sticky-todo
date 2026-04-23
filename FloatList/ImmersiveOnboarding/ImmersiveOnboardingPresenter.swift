@@ -1,11 +1,11 @@
 import Foundation
 
 @MainActor
-final class AltOnboardingPresenter {
-    private let window: AltOnboardingWindow
+final class ImmersiveOnboardingPresenter {
+    private let window: ImmersiveOnboardingWindow
 
     init(realStore: TodoStore?) {
-        self.window = AltOnboardingWindow(realStore: realStore)
+        self.window = ImmersiveOnboardingWindow(realStore: realStore)
     }
 
     func present(

@@ -1,20 +1,20 @@
 import AppKit
 import SwiftUI
 
-private final class AltOnboardingNSWindow: NSWindow {
+private final class ImmersiveOnboardingNSWindow: NSWindow {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 }
 
-/// Alternative immersive onboarding window. It lives entirely under
-/// `AltOnboarding` so the app-level presenter can choose it without
-/// mixing its scene code into the original onboarding implementation.
+/// Immersive onboarding window. It lives entirely under
+/// `ImmersiveOnboarding` so the app-level presenter can choose it without
+/// mixing its scene code into the Classic onboarding implementation.
 @MainActor
-final class AltOnboardingWindow {
+final class ImmersiveOnboardingWindow {
     let window: NSWindow
     /// Shared state visible to the window so migration can happen
     /// against the canonical onboarding store on close.
-    let state = AltOnboardingState()
+    let state = ImmersiveOnboardingState()
     private weak var realStore: TodoStore?
 
     private var closeObserver: NSObjectProtocol?
@@ -26,7 +26,7 @@ final class AltOnboardingWindow {
         self.realStore = realStore
 
         let screenFrame = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let window = AltOnboardingNSWindow(
+        let window = ImmersiveOnboardingNSWindow(
             contentRect: screenFrame,
             styleMask: [.borderless],
             backing: .buffered,
@@ -51,7 +51,7 @@ final class AltOnboardingWindow {
         window.setFrame(screenFrame, display: true)
         self.window = window
 
-        let root = AltOnboardingRootView(state: state, onFinish: { [weak self] in
+        let root = ImmersiveOnboardingRootView(state: state, onFinish: { [weak self] in
             self?.window.close()
         })
         let hosting = NSHostingView(rootView: root)

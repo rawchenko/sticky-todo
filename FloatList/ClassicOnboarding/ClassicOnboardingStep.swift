@@ -1,6 +1,6 @@
 import Foundation
 
-enum OnboardingStepID: String {
+enum ClassicOnboardingStepID: String {
     case welcome
     case hoverExpand
     case createTask
@@ -26,7 +26,7 @@ struct PanelHoverStepContent {
     let targetCollapsed: Bool
 }
 
-enum OnboardingStepKind {
+enum ClassicOnboardingStepKind {
     case basic(BasicStepContent)
     case interactive(InteractiveStepContent)
     case panelHover(PanelHoverStepContent)
@@ -48,21 +48,21 @@ enum OnboardingStepKind {
     }
 }
 
-struct OnboardingStep: Identifiable {
-    let id: OnboardingStepID
-    let kind: OnboardingStepKind
+struct ClassicOnboardingStep: Identifiable {
+    let id: ClassicOnboardingStepID
+    let kind: ClassicOnboardingStepKind
 }
 
-extension OnboardingStep {
-    static let defaultFlow: [OnboardingStep] = [
-        OnboardingStep(
+extension ClassicOnboardingStep {
+    static let defaultFlow: [ClassicOnboardingStep] = [
+        ClassicOnboardingStep(
             id: .welcome,
             kind: .basic(BasicStepContent(
                 title: "Welcome to FloatList",
                 body: "A tiny to-do panel that docks to the edge of your screen — always one glance away, never in the way."
             ))
         ),
-        OnboardingStep(
+        ClassicOnboardingStep(
             id: .hoverExpand,
             kind: .panelHover(PanelHoverStepContent(
                 title: "Pops out on hover",
@@ -71,21 +71,21 @@ extension OnboardingStep {
                 targetCollapsed: false
             ))
         ),
-        OnboardingStep(
+        ClassicOnboardingStep(
             id: .createTask,
             kind: .interactive(InteractiveStepContent(
                 title: "Adding a task",
                 body: "The demo types a task and saves it with Return."
             ))
         ),
-        OnboardingStep(
+        ClassicOnboardingStep(
             id: .completeTask,
             kind: .interactive(InteractiveStepContent(
                 title: "Checking it off",
                 body: "Watch a completed task slide away so only what's left stays in view."
             ))
         ),
-        OnboardingStep(
+        ClassicOnboardingStep(
             id: .hoverCollapse,
             kind: .panelHover(PanelHoverStepContent(
                 title: "Tucks back at the edge",
@@ -94,7 +94,7 @@ extension OnboardingStep {
                 targetCollapsed: true
             ))
         ),
-        OnboardingStep(
+        ClassicOnboardingStep(
             id: .finish,
             kind: .basic(BasicStepContent(
                 title: "You're all set",

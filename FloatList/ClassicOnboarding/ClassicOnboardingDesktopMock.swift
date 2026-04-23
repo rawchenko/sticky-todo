@@ -3,7 +3,7 @@ import SwiftUI
 /// macOS desktop mockup: wallpaper + menubar, with a caller-supplied slot on
 /// the top-right where the docked FloatList content lives. An optional
 /// `overlay` builder sits above the docked content (e.g. the scripted cursor).
-struct OnboardingDesktopMock<Content: View, Overlay: View>: View {
+struct ClassicOnboardingDesktopMock<Content: View, Overlay: View>: View {
     let dockedContent: Content
     let overlay: Overlay
     let onSizeChange: (CGSize) -> Void

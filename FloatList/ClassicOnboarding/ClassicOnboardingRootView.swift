@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-enum OnboardingLayout {
+enum ClassicOnboardingLayout {
     static let cardWidth: CGFloat = 1040
     static let cardHeight: CGFloat = 620
 
@@ -14,7 +14,7 @@ enum OnboardingLayout {
 }
 
 /// Embedded panel's window-global SwiftUI frame, published so
-/// `OnboardingWindow` can fly the real panel in from that visual position.
+/// `ClassicOnboardingWindow` can fly the real panel in from that visual position.
 struct EmbeddedPanelFrameKey: PreferenceKey {
     static var defaultValue: CGRect = .zero
 
@@ -24,8 +24,8 @@ struct EmbeddedPanelFrameKey: PreferenceKey {
     }
 }
 
-struct OnboardingRootView: View {
-    @ObservedObject var coordinator: OnboardingCoordinator
+struct ClassicOnboardingRootView: View {
+    @ObservedObject var coordinator: ClassicOnboardingCoordinator
     @ObservedObject var demoStore: TodoStore
     @ObservedObject var demoPanelManager: PanelManager
     let scriptedInput: ScriptedInputBuffer
@@ -33,14 +33,14 @@ struct OnboardingRootView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @StateObject private var cursor = OnboardingCursorController()
-    @ObservedObject private var tweaks = OnboardingTweaks.shared
+    @StateObject private var cursor = ClassicOnboardingCursorController()
+    @ObservedObject private var tweaks = ClassicOnboardingTweaks.shared
     @State private var mockSize: CGSize = .zero
 
     private let demoTaskTitle = "Pick up groceries"
 
     var body: some View {
-        OnboardingStageCard {
+        ClassicOnboardingStageCard {
             HStack(spacing: 0) {
                 instructionColumn
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -49,7 +49,7 @@ struct OnboardingRootView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .frame(width: OnboardingLayout.cardWidth, height: OnboardingLayout.cardHeight)
+        .frame(width: ClassicOnboardingLayout.cardWidth, height: ClassicOnboardingLayout.cardHeight)
         .onPreferenceChange(EmbeddedPanelFrameKey.self) { rect in
             onEmbeddedFrameChange(rect)
         }
@@ -61,7 +61,7 @@ struct OnboardingRootView: View {
     // MARK: - Left column
 
     private var instructionColumn: some View {
-        OnboardingInstructionChip(
+        ClassicOnboardingInstructionChip(
             coordinator: coordinator,
             title: coordinator.currentStep.kind.title,
             bodyText: coordinator.currentStep.kind.body,
@@ -73,7 +73,7 @@ struct OnboardingRootView: View {
         .accessibilityLabel(Text(accessibilitySummary(for: coordinator.currentStep)))
     }
 
-    private func primaryTitle(for step: OnboardingStep) -> String {
+    private func primaryTitle(for step: ClassicOnboardingStep) -> String {
         if case .basic = step.kind {
             if coordinator.isFirst { return "Start demo" }
             if coordinator.isLast { return "Launch FloatList" }
@@ -84,7 +84,7 @@ struct OnboardingRootView: View {
     // MARK: - Right column
 
     private var demoColumn: some View {
-        OnboardingDesktopMock(
+        ClassicOnboardingDesktopMock(
             onSizeChange: { mockSize = $0 },
             dockedContent: {
                 livePanelPreview
@@ -96,7 +96,7 @@ struct OnboardingRootView: View {
                     )
             },
             overlay: {
-                OnboardingCursorOverlay(controller: cursor, tweaks: tweaks)
+                ClassicOnboardingCursorOverlay(controller: cursor, tweaks: tweaks)
             }
         )
     }
@@ -116,11 +116,11 @@ struct OnboardingRootView: View {
     }
 
     private var panelWidth: CGFloat {
-        demoPanelManager.isCollapsed ? OnboardingLayout.demoCollapsedWidth : OnboardingLayout.demoExpandedWidth
+        demoPanelManager.isCollapsed ? ClassicOnboardingLayout.demoCollapsedWidth : ClassicOnboardingLayout.demoExpandedWidth
     }
 
     private var panelHeight: CGFloat {
-        demoPanelManager.isCollapsed ? OnboardingLayout.demoCollapsedHeight : OnboardingLayout.demoExpandedHeight
+        demoPanelManager.isCollapsed ? ClassicOnboardingLayout.demoCollapsedHeight : ClassicOnboardingLayout.demoExpandedHeight
     }
 
     // MARK: - Navigation
@@ -151,7 +151,7 @@ struct OnboardingRootView: View {
 
     // MARK: - Autoplay
 
-    private func runScene(for step: OnboardingStep) async {
+    private func runScene(for step: ClassicOnboardingStep) async {
         await applyInitialState(for: step)
         guard !Task.isCancelled else { return }
 
@@ -218,19 +218,19 @@ struct OnboardingRootView: View {
     /// If it's hidden, fade it in at the fallback start point (show internally
     /// waits for any prior fade-out to finish before snapping position, so
     /// quick hide→show cycles never reveal a teleport).
-    private func cursorBeginScene(at fallback: OnboardingCursorTarget, panelCollapsed: Bool) async {
+    private func cursorBeginScene(at fallback: ClassicOnboardingCursorTarget, panelCollapsed: Bool) async {
         guard !reduceMotion, mockSize != .zero else { return }
         guard !cursor.isVisible else { return }
         await cursor.show(at: fallback, in: mockSize, panelCollapsed: panelCollapsed)
         try? await Task.sleep(nanoseconds: UInt64(Double(tweaks.cursorFadeDuration) * 1_000_000_000))
     }
 
-    private func cursorMove(to target: OnboardingCursorTarget, panelCollapsed: Bool) async {
+    private func cursorMove(to target: ClassicOnboardingCursorTarget, panelCollapsed: Bool) async {
         guard !reduceMotion, mockSize != .zero else { return }
         await cursor.move(to: target, in: mockSize, panelCollapsed: panelCollapsed)
     }
 
-    private func applyInitialState(for step: OnboardingStep) async {
+    private func applyInitialState(for step: ClassicOnboardingStep) async {
         resetScriptedInput()
 
         switch step.kind {
@@ -342,7 +342,7 @@ struct OnboardingRootView: View {
 
     // MARK: - Accessibility
 
-    private func accessibilitySummary(for step: OnboardingStep) -> String {
+    private func accessibilitySummary(for step: ClassicOnboardingStep) -> String {
         "Step \(coordinator.currentIndex + 1) of \(coordinator.steps.count). \(step.kind.title). \(step.kind.body)"
     }
 }

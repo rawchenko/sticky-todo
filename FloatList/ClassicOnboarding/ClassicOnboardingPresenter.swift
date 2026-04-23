@@ -1,8 +1,8 @@
 import AppKit
 
 @MainActor
-final class OriginalOnboardingPresenter {
-    private let window = OnboardingWindow()
+final class ClassicOnboardingPresenter {
+    private let window = ClassicOnboardingWindow()
     private var completionObserver: NSObjectProtocol?
     private var onComplete: ((NSRect?) -> Void)?
     private var didComplete = false

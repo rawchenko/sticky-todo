@@ -425,7 +425,7 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     /// Places the panel at the docked collapsed frame for `anchor` and
-    /// brings it on screen without animation. Used by the Alt Onboarding
+    /// brings it on screen without animation. Used by the Immersive onboarding
     /// handoff — the stage already animated its fake panel into place,
     /// so the real panel just materializes at the same spot.
     func revealDocked(at anchor: EdgeAnchor) {
@@ -438,7 +438,7 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
 
         // Disable animations on the state change. ContentView listens
         // to `isCollapsed` via `.animation(_, value:)` — if the panel
-        // was left expanded before Alt Onboarding hid it, a bare
+        // was left expanded before Immersive onboarding hid it, a bare
         // `isCollapsed = true` here would run an expand→collapse
         // animation on reveal, producing a visible twitch.
         var transaction = Transaction(animation: nil)

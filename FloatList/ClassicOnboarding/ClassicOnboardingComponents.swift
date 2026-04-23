@@ -3,9 +3,9 @@ import SwiftUI
 /// Left-column instruction content. Progress bar stays mounted so its width
 /// animates smoothly across steps; title/body/footer re-identify per step to
 /// drive the reveal cascades + transition without disturbing the bar.
-struct OnboardingInstructionChip: View {
-    @ObservedObject var coordinator: OnboardingCoordinator
-    @ObservedObject private var tweaks = OnboardingTweaks.shared
+struct ClassicOnboardingInstructionChip: View {
+    @ObservedObject var coordinator: ClassicOnboardingCoordinator
+    @ObservedObject private var tweaks = ClassicOnboardingTweaks.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let title: String
     let bodyText: String
@@ -15,20 +15,20 @@ struct OnboardingInstructionChip: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: tweaks.chipVerticalSpacing) {
-            OnboardingProgressBar(
+            ClassicOnboardingProgressBar(
                 currentIndex: coordinator.currentIndex,
                 stepCount: coordinator.steps.count
             )
 
             VStack(alignment: .leading, spacing: tweaks.chipVerticalSpacing) {
-                StaggeredCharacterText(
+                ClassicOnboardingStaggeredCharacterText(
                     text: title,
                     font: .system(size: tweaks.interactiveTitleSize, weight: .semibold, design: .default),
                     startDelay: 0.1,
                     color: Color.primary
                 )
 
-                FadingWordsText(
+                ClassicOnboardingFadingWordsText(
                     text: bodyText,
                     font: .system(size: tweaks.interactiveBodySize, weight: .regular),
                     startDelay: 0.35,
@@ -37,7 +37,7 @@ struct OnboardingInstructionChip: View {
 
                 Spacer(minLength: 0)
 
-                OnboardingFooterControls(
+                ClassicOnboardingFooterControls(
                     primaryTitle: primaryTitle,
                     onPrimary: onPrimary,
                     onBack: coordinator.isFirst ? nil : onBack
@@ -62,7 +62,7 @@ struct OnboardingInstructionChip: View {
 
 /// Shared footer row: Back on the left, primary CTA on the right. `Back` is
 /// omitted (pass nil) on the first step where it doesn't apply.
-struct OnboardingFooterControls: View {
+struct ClassicOnboardingFooterControls: View {
     let primaryTitle: String
     let onPrimary: () -> Void
     let onBack: (() -> Void)?
@@ -70,13 +70,13 @@ struct OnboardingFooterControls: View {
     var body: some View {
         HStack(spacing: 10) {
             if let onBack {
-                OnboardingSecondaryPillButton(title: "Back", systemImage: "arrow.left", action: onBack)
+                ClassicOnboardingSecondaryPillButton(title: "Back", systemImage: "arrow.left", action: onBack)
                     .accessibilityLabel("Back")
             }
 
             Spacer(minLength: 0)
 
-            OnboardingPrimaryPillButton(title: primaryTitle, action: onPrimary)
+            ClassicOnboardingPrimaryPillButton(title: primaryTitle, action: onPrimary)
                 .accessibilityLabel(primaryTitle)
         }
     }
@@ -85,8 +85,8 @@ struct OnboardingFooterControls: View {
 /// Calm linear progress indicator. No step counter (that detail is noise for
 /// a short autoplay demo); VoiceOver still gets "Step N of M" via the
 /// accessibility label.
-struct OnboardingProgressBar: View {
-    @ObservedObject private var tweaks = OnboardingTweaks.shared
+struct ClassicOnboardingProgressBar: View {
+    @ObservedObject private var tweaks = ClassicOnboardingTweaks.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let currentIndex: Int
     let stepCount: Int
@@ -116,7 +116,7 @@ struct OnboardingProgressBar: View {
 /// Dark pill button — the step's main forward action. Bound to the
 /// default keyboard action so Return advances when focus is anywhere in
 /// the onboarding card.
-struct OnboardingPrimaryPillButton: View {
+struct ClassicOnboardingPrimaryPillButton: View {
     let title: String
     let action: () -> Void
 
@@ -130,12 +130,12 @@ struct OnboardingPrimaryPillButton: View {
                     .imageScale(.small)
             }
         }
-        .buttonStyle(OnboardingPrimaryPillButtonStyle())
+        .buttonStyle(ClassicOnboardingPrimaryPillButtonStyle())
         .keyboardShortcut(.defaultAction)
     }
 }
 
-struct OnboardingPrimaryPillButtonStyle: ButtonStyle {
+struct ClassicOnboardingPrimaryPillButtonStyle: ButtonStyle {
     @Environment(\.colorScheme) private var scheme
 
     func makeBody(configuration: Configuration) -> some View {
@@ -155,7 +155,7 @@ struct OnboardingPrimaryPillButtonStyle: ButtonStyle {
 
 /// Muted pill for Back — same hit size as the primary so users don't have to
 /// aim for a small target.
-struct OnboardingSecondaryPillButton: View {
+struct ClassicOnboardingSecondaryPillButton: View {
     let title: String
     let systemImage: String?
     let action: () -> Void
@@ -172,11 +172,11 @@ struct OnboardingSecondaryPillButton: View {
                     .fixedSize(horizontal: true, vertical: false)
             }
         }
-        .buttonStyle(OnboardingSecondaryPillButtonStyle())
+        .buttonStyle(ClassicOnboardingSecondaryPillButtonStyle())
     }
 }
 
-struct OnboardingSecondaryPillButtonStyle: ButtonStyle {
+struct ClassicOnboardingSecondaryPillButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .medium))

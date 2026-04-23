@@ -285,10 +285,20 @@ struct TweakSlider: View {
 }
 
 private struct OnboardingSettingsView: View {
-    private let variant = OnboardingConfiguration.activeVariant
+    private let selection = OnboardingConfiguration.activeSelection
 
     var body: some View {
         Form {
+            Section("Flow") {
+                LabeledContent("Active onboarding") {
+                    Text(selection.definition.displayName)
+                }
+                LabeledContent("Selection source") {
+                    Text(selection.source.title)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section {
                 HStack {
                     Spacer()
@@ -298,24 +308,24 @@ private struct OnboardingSettingsView: View {
                 }
             }
 
-            if variant.rawValue == "original" {
-                originalOnboardingSettingsContent()
+            if selection.definition.variant == OnboardingCatalog.classic.variant {
+                classicOnboardingSettingsContent()
             }
-            if variant.rawValue == "alt" {
-                altOnboardingSettingsContent()
+            if selection.definition.variant == OnboardingCatalog.immersive.variant {
+                immersiveOnboardingSettingsContent()
             }
         }
         .formStyle(.grouped)
     }
 
     @ViewBuilder
-    private func originalOnboardingSettingsContent() -> some View {
-        OriginalOnboardingSettingsContent()
+    private func classicOnboardingSettingsContent() -> some View {
+        ClassicOnboardingSettingsContent()
     }
 
     @ViewBuilder
-    private func altOnboardingSettingsContent() -> some View {
-        AltOnboardingSettingsContent()
+    private func immersiveOnboardingSettingsContent() -> some View {
+        ImmersiveOnboardingSettingsContent()
     }
 }
 

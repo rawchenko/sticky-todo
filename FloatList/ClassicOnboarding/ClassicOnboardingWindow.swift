@@ -10,9 +10,9 @@ private final class OnboardingNSWindow: NSWindow {
 }
 
 @MainActor
-final class OnboardingWindow {
+final class ClassicOnboardingWindow {
     let window: NSWindow
-    let coordinator: OnboardingCoordinator
+    let coordinator: ClassicOnboardingCoordinator
     let demoStore: TodoStore
     let demoPanelManager: PanelManager
     let scriptedInput: ScriptedInputBuffer
@@ -26,13 +26,13 @@ final class OnboardingWindow {
     init() {
         let mode = OnboardingMode(isActive: true)
         self.scriptedInput = ScriptedInputBuffer()
-        self.coordinator = OnboardingCoordinator()
+        self.coordinator = ClassicOnboardingCoordinator()
         self.demoPanelManager = PanelManager(isOnboardingMode: true)
         self.demoStore = TodoStore(inMemory: true)
 
         let contentSize = NSSize(
-            width: OnboardingLayout.cardWidth,
-            height: OnboardingLayout.cardHeight
+            width: ClassicOnboardingLayout.cardWidth,
+            height: ClassicOnboardingLayout.cardHeight
         )
         let window = OnboardingNSWindow(
             contentRect: NSRect(origin: .zero, size: contentSize),
@@ -49,7 +49,7 @@ final class OnboardingWindow {
         window.center()
         self.window = window
 
-        let root = OnboardingRootView(
+        let root = ClassicOnboardingRootView(
             coordinator: self.coordinator,
             demoStore: self.demoStore,
             demoPanelManager: self.demoPanelManager,

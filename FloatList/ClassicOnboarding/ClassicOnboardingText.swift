@@ -3,7 +3,7 @@ import SwiftUI
 /// Character-by-character reveal with per-char fade+blur. Respects Reduce
 /// Motion (renders instantly) and exposes a single accessibility label for
 /// the whole string.
-struct StaggeredCharacterText: View {
+struct ClassicOnboardingStaggeredCharacterText: View {
     let text: String
     let font: Font
     var perCharacterDelay: Double = 0.035
@@ -49,7 +49,7 @@ private struct CharacterCascade: View {
 
     var body: some View {
         let characters = Array(text)
-        FlowLayout(lineSpacing: lineSpacing) {
+        ClassicOnboardingFlowLayout(lineSpacing: lineSpacing) {
             ForEach(Array(characters.enumerated()), id: \.offset) { idx, ch in
                 RevealingCharacter(
                     character: ch,
@@ -95,7 +95,7 @@ private struct RevealingCharacter: View {
 }
 
 /// Word-level fade-in for body copy.
-struct FadingWordsText: View {
+struct ClassicOnboardingFadingWordsText: View {
     let text: String
     let font: Font
     var perWordDelay: Double = 0.06
@@ -137,7 +137,7 @@ private struct WordCascade: View {
 
     var body: some View {
         let words = text.split(separator: " ", omittingEmptySubsequences: false).map(String.init)
-        FlowLayout(lineSpacing: 4, horizontalSpacing: 0) {
+        ClassicOnboardingFlowLayout(lineSpacing: 4, horizontalSpacing: 0) {
             ForEach(Array(words.enumerated()), id: \.offset) { idx, word in
                 RevealingWord(
                     word: idx == words.count - 1 ? word : word + " ",
@@ -183,7 +183,7 @@ private struct RevealingWord: View {
 }
 
 /// Wrap-aware layout for character/word runs.
-struct FlowLayout: Layout {
+struct ClassicOnboardingFlowLayout: Layout {
     var lineSpacing: CGFloat = 4
     var horizontalSpacing: CGFloat = 0
 

@@ -7,11 +7,11 @@ final class AppOnboardingPresenter {
         case revealDocked(EdgeAnchor)
     }
 
-    private var originalPresenter: AnyObject?
-    private var altPresenter: AnyObject?
+    private var classicPresenter: AnyObject?
+    private var immersivePresenter: AnyObject?
 
     var isPresenting: Bool {
-        originalPresenter != nil || altPresenter != nil
+        classicPresenter != nil || immersivePresenter != nil
     }
 
     func present(
@@ -24,11 +24,11 @@ final class AppOnboardingPresenter {
             return
         }
 
-        if presentOriginalIfAvailable(variant: variant, realStore: realStore, onComplete: onComplete, onClose: onClose) {
+        if presentClassicIfAvailable(variant: variant, realStore: realStore, onComplete: onComplete, onClose: onClose) {
             return
         }
 
-        if presentAltIfAvailable(variant: variant, realStore: realStore, onComplete: onComplete, onClose: onClose) {
+        if presentImmersiveIfAvailable(variant: variant, realStore: realStore, onComplete: onComplete, onClose: onClose) {
             return
         }
 
@@ -42,44 +42,44 @@ final class AppOnboardingPresenter {
         onComplete: @escaping (Completion) -> Void,
         onClose: @escaping () -> Void
     ) -> Bool {
-        switch variant.rawValue {
-        case "original":
-            return presentOriginalIfAvailable(variant: variant, realStore: realStore, onComplete: onComplete, onClose: onClose)
-        case "alt":
-            return presentAltIfAvailable(variant: variant, realStore: realStore, onComplete: onComplete, onClose: onClose)
+        switch variant {
+        case OnboardingCatalog.classic.variant:
+            return presentClassicIfAvailable(variant: variant, realStore: realStore, onComplete: onComplete, onClose: onClose)
+        case OnboardingCatalog.immersive.variant:
+            return presentImmersiveIfAvailable(variant: variant, realStore: realStore, onComplete: onComplete, onClose: onClose)
         default:
             return false
         }
     }
 
-    private func presentOriginalIfAvailable(
+    private func presentClassicIfAvailable(
         variant _: OnboardingVariant,
         realStore _: TodoStore?,
         onComplete: @escaping (Completion) -> Void,
         onClose: @escaping () -> Void
     ) -> Bool {
-        let presenter = OriginalOnboardingPresenter()
-        originalPresenter = presenter
+        let presenter = ClassicOnboardingPresenter()
+        classicPresenter = presenter
         presenter.present(
             onComplete: { origin in
                 onComplete(.showPanel(flyInFrom: origin))
             },
             onClose: { [weak self] in
-                self?.originalPresenter = nil
+                self?.classicPresenter = nil
                 onClose()
             }
         )
         return true
     }
 
-    private func presentAltIfAvailable(
+    private func presentImmersiveIfAvailable(
         variant _: OnboardingVariant,
         realStore: TodoStore?,
         onComplete: @escaping (Completion) -> Void,
         onClose: @escaping () -> Void
     ) -> Bool {
-        let presenter = AltOnboardingPresenter(realStore: realStore)
-        altPresenter = presenter
+        let presenter = ImmersiveOnboardingPresenter(realStore: realStore)
+        immersivePresenter = presenter
         presenter.present(
             onComplete: {
                 let screen = NSScreen.main
@@ -91,7 +91,7 @@ final class AppOnboardingPresenter {
                 onComplete(.revealDocked(anchor))
             },
             onClose: { [weak self] in
-                self?.altPresenter = nil
+                self?.immersivePresenter = nil
                 onClose()
             }
         )

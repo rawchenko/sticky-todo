@@ -4,7 +4,7 @@ import AppKit
 /// Targets the faux onboarding cursor can travel to. Coordinates are resolved
 /// at call-time against the current desktop-mock size and the panel's
 /// collapsed/expanded state, so the same target name works across steps.
-enum OnboardingCursorTarget {
+enum ClassicOnboardingCursorTarget {
     case resting
     case panelHandle
     case panelEdge
@@ -12,7 +12,7 @@ enum OnboardingCursorTarget {
     case firstRowCheckbox
 }
 
-enum OnboardingCursorGesture: Equatable {
+enum ClassicOnboardingCursorGesture: Equatable {
     case idle
     case press
 }
@@ -21,14 +21,14 @@ enum OnboardingCursorGesture: Equatable {
 /// onboarding demo column. Purely decorative — never touches the real
 /// `NSCursor` and ignores all hit testing.
 @MainActor
-final class OnboardingCursorController: ObservableObject {
+final class ClassicOnboardingCursorController: ObservableObject {
     @Published private(set) var position: CGPoint = .zero
-    @Published private(set) var gesture: OnboardingCursorGesture = .idle
+    @Published private(set) var gesture: ClassicOnboardingCursorGesture = .idle
     @Published private(set) var isVisible: Bool = false
     /// Monotonic counter the overlay watches to spawn a new click ripple.
     @Published private(set) var rippleTrigger: Int = 0
 
-    private let tweaks: OnboardingTweaks
+    private let tweaks: ClassicOnboardingTweaks
     private var currentMockSize: CGSize = .zero
     private var currentPanelCollapsed: Bool = true
     /// Completes when the most recent `hide()` has finished its fade-out so
@@ -39,13 +39,13 @@ final class OnboardingCursorController: ObservableObject {
     /// a visible teleport across the card.
     private var pendingHideFade: Task<Void, Never>?
 
-    init(tweaks: OnboardingTweaks = .shared) {
+    init(tweaks: ClassicOnboardingTweaks = .shared) {
         self.tweaks = tweaks
     }
 
     // MARK: Visibility
 
-    func show(at target: OnboardingCursorTarget, in size: CGSize, panelCollapsed: Bool) async {
+    func show(at target: ClassicOnboardingCursorTarget, in size: CGSize, panelCollapsed: Bool) async {
         // Drain any in-flight fade-out before snapping the new position; the
         // arrow is only truly invisible once that fade is complete.
         if let pending = pendingHideFade {
@@ -85,7 +85,7 @@ final class OnboardingCursorController: ObservableObject {
     // MARK: Motion
 
     func move(
-        to target: OnboardingCursorTarget,
+        to target: ClassicOnboardingCursorTarget,
         in size: CGSize,
         panelCollapsed: Bool
     ) async {
@@ -117,7 +117,7 @@ final class OnboardingCursorController: ObservableObject {
 
     // MARK: Position math
 
-    private func point(for target: OnboardingCursorTarget) -> CGPoint {
+    private func point(for target: ClassicOnboardingCursorTarget) -> CGPoint {
         switch target {
         case .resting:
             return CGPoint(x: tweaks.cursorRestingX, y: tweaks.cursorRestingY)
@@ -146,19 +146,19 @@ final class OnboardingCursorController: ObservableObject {
     }
 
     /// Top-right-anchored docked panel rect in mock-local coordinates.
-    /// Matches the layout in `OnboardingDesktopMock`: 28pt menubar + 18pt
+    /// Matches the layout in `ClassicOnboardingDesktopMock`: 28pt menubar + 18pt
     /// inset from the top and right edges.
     private func expandedPanelRect() -> CGRect {
-        let w = OnboardingLayout.demoExpandedWidth
-        let h = OnboardingLayout.demoExpandedHeight
+        let w = ClassicOnboardingLayout.demoExpandedWidth
+        let h = ClassicOnboardingLayout.demoExpandedHeight
         let x = max(currentMockSize.width - w - 18, 0)
         let y: CGFloat = 28 + 18
         return CGRect(x: x, y: y, width: w, height: h)
     }
 
     private func collapsedPanelRect() -> CGRect {
-        let w = OnboardingLayout.demoCollapsedWidth
-        let h = OnboardingLayout.demoCollapsedHeight
+        let w = ClassicOnboardingLayout.demoCollapsedWidth
+        let h = ClassicOnboardingLayout.demoCollapsedHeight
         let x = max(currentMockSize.width - w - 18, 0)
         let y: CGFloat = 28 + 18
         return CGRect(x: x, y: y, width: w, height: h)
@@ -168,10 +168,10 @@ final class OnboardingCursorController: ObservableObject {
 /// Overlay view that renders the cursor arrow and any in-flight click ripples
 /// inside the desktop mock. Positions come from the controller in mock-local
 /// coordinates, so this view must be placed inside a container that matches
-/// the mock's coordinate space (i.e., inside `OnboardingDesktopMock`).
-struct OnboardingCursorOverlay: View {
-    @ObservedObject var controller: OnboardingCursorController
-    @ObservedObject var tweaks: OnboardingTweaks
+/// the mock's coordinate space (i.e., inside `ClassicOnboardingDesktopMock`).
+struct ClassicOnboardingCursorOverlay: View {
+    @ObservedObject var controller: ClassicOnboardingCursorController
+    @ObservedObject var tweaks: ClassicOnboardingTweaks
 
     @State private var pulses: [Pulse] = []
 

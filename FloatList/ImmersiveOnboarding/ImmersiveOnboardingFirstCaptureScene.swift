@@ -11,11 +11,11 @@ import SwiftUI
 ///
 /// The moment any task becomes completed, the scene advances to the
 /// farewell (Scene 3).
-struct AltSceneFirstCapture: View {
+struct ImmersiveOnboardingFirstCaptureScene: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @EnvironmentObject private var state: AltOnboardingState
-    @EnvironmentObject private var coordinator: AltOnboardingCoordinator
+    @EnvironmentObject private var state: ImmersiveOnboardingState
+    @EnvironmentObject private var coordinator: ImmersiveOnboardingCoordinator
     @ObservedObject private var tweaks = LayoutTweaks.shared
 
     enum Phase {
@@ -86,7 +86,7 @@ struct AltSceneFirstCapture: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .altOnboardingChip(Capsule(style: .continuous))
+        .immersiveOnboardingChip(Capsule(style: .continuous))
         .allowsHitTesting(false)
     }
 
@@ -100,7 +100,7 @@ struct AltSceneFirstCapture: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .altOnboardingChip(Capsule(style: .continuous))
+        .immersiveOnboardingChip(Capsule(style: .continuous))
         .allowsHitTesting(false)
     }
 

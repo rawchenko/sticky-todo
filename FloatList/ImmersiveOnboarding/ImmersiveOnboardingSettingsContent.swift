@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct AltOnboardingSettingsContent: View {
+struct ImmersiveOnboardingSettingsContent: View {
     @AppStorage(OnboardingAudioPreferences.preferenceKey) private var audioEnabled: Bool = true
 
     var body: some View {

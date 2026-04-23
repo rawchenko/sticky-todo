@@ -190,7 +190,7 @@ class TodoStore: ObservableObject {
     // MARK: - Import
 
     /// Merges items from another store into this one. Used by the
-    /// Alt Onboarding flow to migrate tasks created in the temporary
+    /// Immersive onboarding flow to migrate tasks created in the temporary
     /// in-memory store into the user's real Inbox. Preserves completion
     /// and trash state; trashed items retain their trashID listing and
     /// point their `trashedOriginalListID` back at the real Inbox so

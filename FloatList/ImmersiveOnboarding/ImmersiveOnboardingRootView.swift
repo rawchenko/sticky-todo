@@ -1,15 +1,15 @@
 import SwiftUI
 
-/// Ordered phases of the Alt Onboarding flow. Each case drives exactly
-/// one scene view in `AltOnboardingRootView.sceneOverlay`; ordering is
+/// Ordered phases of the Immersive onboarding flow. Each case drives exactly
+/// one scene view in `ImmersiveOnboardingRootView.sceneOverlay`; ordering is
 /// significant — `next()` / `back()` walk the declaration order.
-enum AltOnboardingScene: Int, CaseIterable {
+enum ImmersiveOnboardingScene: Int, CaseIterable {
     case firstContact
     case firstCapture
     case farewell
 }
 
-/// Styling shared across every chip in the Alt Onboarding stage.
+/// Styling shared across every chip in the Immersive onboarding stage.
 ///
 /// `.glassEffect(.regular, ...)` samples the window-level backdrop
 /// and (critically) ignores whatever's attached via `.background` on
@@ -21,7 +21,7 @@ enum AltOnboardingScene: Int, CaseIterable {
 /// entirely: a warm cream pill in Light, a warm-dark pill in Dark.
 /// Both feel like they belong to the same family as the panel
 /// without depending on what's behind them on the stage.
-enum AltOnboardingChip {
+enum ImmersiveOnboardingChip {
     static let fill = Color.dynamic(
         light: Color(red: 1.0, green: 0.93, blue: 0.81).opacity(0.88),
         dark: Color(red: 0.22, green: 0.17, blue: 0.12).opacity(0.88)
@@ -35,37 +35,37 @@ enum AltOnboardingChip {
 }
 
 extension View {
-    /// Applies the shared Alt Onboarding pill style — solid
+    /// Applies the shared Immersive onboarding pill style — solid
     /// theme-aware fill + hairline border. Use in place of
     /// `.liquidGlass(Capsule(...))` for chips on the stage.
-    func altOnboardingChip<S: InsettableShape>(_ shape: S) -> some View {
+    func immersiveOnboardingChip<S: InsettableShape>(_ shape: S) -> some View {
         self
-            .background(shape.fill(AltOnboardingChip.fill))
-            .overlay(shape.strokeBorder(AltOnboardingChip.border, lineWidth: 0.5))
+            .background(shape.fill(ImmersiveOnboardingChip.fill))
+            .overlay(shape.strokeBorder(ImmersiveOnboardingChip.border, lineWidth: 0.5))
     }
 }
 
 @MainActor
-final class AltOnboardingCoordinator: ObservableObject {
-    @Published var scene: AltOnboardingScene = .firstContact
+final class ImmersiveOnboardingCoordinator: ObservableObject {
+    @Published var scene: ImmersiveOnboardingScene = .firstContact
 
-    var isLast: Bool { scene == AltOnboardingScene.allCases.last }
+    var isLast: Bool { scene == ImmersiveOnboardingScene.allCases.last }
 
     func next() {
-        guard let idx = AltOnboardingScene.allCases.firstIndex(of: scene),
-              idx + 1 < AltOnboardingScene.allCases.count
+        guard let idx = ImmersiveOnboardingScene.allCases.firstIndex(of: scene),
+              idx + 1 < ImmersiveOnboardingScene.allCases.count
         else { return }
         withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
-            scene = AltOnboardingScene.allCases[idx + 1]
+            scene = ImmersiveOnboardingScene.allCases[idx + 1]
         }
     }
 
     func back() {
-        guard let idx = AltOnboardingScene.allCases.firstIndex(of: scene),
+        guard let idx = ImmersiveOnboardingScene.allCases.firstIndex(of: scene),
               idx > 0
         else { return }
         withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
-            scene = AltOnboardingScene.allCases[idx - 1]
+            scene = ImmersiveOnboardingScene.allCases[idx - 1]
         }
     }
 }
@@ -74,15 +74,15 @@ final class AltOnboardingCoordinator: ObservableObject {
 /// visible, and a discreet corner affordance for closing. The persistent
 /// visual layers (dim, halo, panel) live here so they survive scene
 /// transitions uninterrupted; scenes add their own overlay on top.
-struct AltOnboardingRootView: View {
-    /// Shared state is owned by `AltOnboardingWindow` so migration on
+struct ImmersiveOnboardingRootView: View {
+    /// Shared state is owned by `ImmersiveOnboardingWindow` so migration on
     /// close can see the final task list without fighting SwiftUI's
     /// view-lifecycle dealloc timing.
-    @ObservedObject var state: AltOnboardingState
+    @ObservedObject var state: ImmersiveOnboardingState
     var onFinish: () -> Void
 
-    @StateObject private var coordinator = AltOnboardingCoordinator()
-    @StateObject private var audio = AltOnboardingAudio()
+    @StateObject private var coordinator = ImmersiveOnboardingCoordinator()
+    @StateObject private var audio = ImmersiveOnboardingAudio()
     @ObservedObject private var tweaks = LayoutTweaks.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -329,11 +329,11 @@ struct AltOnboardingRootView: View {
         Group {
             switch coordinator.scene {
             case .firstContact:
-                AltSceneFirstContact()
+                ImmersiveOnboardingFirstContactScene()
             case .firstCapture:
-                AltSceneFirstCapture()
+                ImmersiveOnboardingFirstCaptureScene()
             case .farewell:
-                AltSceneFarewell(onFinish: onFinish)
+                ImmersiveOnboardingFarewellScene(onFinish: onFinish)
             }
         }
         .id(coordinator.scene)
