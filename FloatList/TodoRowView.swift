@@ -672,10 +672,15 @@ struct TodoRowView: View {
     }
 
     private var swipeRevealLayer: some View {
-        HStack(spacing: 0) {
+        // Cap the reveal pill to the row's own width so that when
+        // `performSecondaryAction` slides the row off-screen by animating
+        // `swipeOffset` past `rowWidth`, the pill doesn't visibly grow
+        // wider than the row.
+        let maxPillWidth = max(0, rowWidth - tweaks.pillSpacing)
+        return HStack(spacing: 0) {
             if swipeOffset > 0 {
                 revealPill(
-                    width: max(0, swipeOffset - tweaks.pillSpacing),
+                    width: min(maxPillWidth, max(0, swipeOffset - tweaks.pillSpacing)),
                     progress: min(1, swipeOffset / commitThreshold),
                     color: isTrashItem ? FloatListTheme.controlFillStrong : FloatListTheme.success,
                     systemImage: isTrashItem ? "arrow.uturn.backward.circle.fill" : "checkmark.circle.fill",
@@ -687,7 +692,7 @@ struct TodoRowView: View {
             Spacer(minLength: 0)
             if swipeOffset < 0 {
                 revealPill(
-                    width: max(0, -swipeOffset - tweaks.pillSpacing),
+                    width: min(maxPillWidth, max(0, -swipeOffset - tweaks.pillSpacing)),
                     progress: min(1, -swipeOffset / commitThreshold),
                     color: FloatListTheme.destructive,
                     systemImage: "trash.circle.fill",
