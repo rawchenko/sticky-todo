@@ -131,6 +131,21 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     @Published var currentAnchor = EdgeAnchor(edge: .right, vertical: .top, anchorY: 0)
     @Published var isDragging = false
 
+    /// When true, this instance is a lightweight state-only facade used by the
+    /// onboarding window to feed `ContentView` the panel-state it reads
+    /// (`currentAnchor`, `isCollapsed`, `isDragging`) without actually owning
+    /// an `NSPanel`. Edge-snapping and collapse are fully suppressed.
+    let isOnboardingMode: Bool
+
+    init(isOnboardingMode: Bool = false) {
+        self.isOnboardingMode = isOnboardingMode
+        super.init()
+        if isOnboardingMode {
+            isCollapsed = false
+            currentAnchor = EdgeAnchor(edge: .right, vertical: .center, anchorY: 0)
+        }
+    }
+
     private var expandedSize: NSSize {
         NSSize(width: LayoutTweaks.shared.expandedWidth, height: LayoutTweaks.shared.expandedHeight)
     }
@@ -158,6 +173,7 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     private var isHoverHeld: Bool { hoverHoldCount > 0 }
 
     func setup<Content: View>(contentView: Content) {
+        guard !isOnboardingMode else { return }
         let panel = KeyablePanel(
             contentRect: NSRect(origin: .zero, size: expandedSize),
             styleMask: [.borderless, .nonactivatingPanel, .resizable],
@@ -263,18 +279,20 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     func collapse() {
-        guard panel != nil, !isCollapsed else { return }
+        guard !isCollapsed else { return }
         withAnimation(PanelMotion.stateAnimation) {
             isCollapsed = true
         }
+        guard panel != nil else { return }
         positionAtAnchor(currentAnchor, animated: true)
     }
 
     func expand() {
-        guard panel != nil, isCollapsed else { return }
+        guard isCollapsed else { return }
         withAnimation(PanelMotion.stateAnimation) {
             isCollapsed = false
         }
+        guard panel != nil else { return }
         positionAtAnchor(currentAnchor, animated: true)
     }
 
@@ -289,6 +307,7 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     // MARK: - Edge snapping
 
     private func snapToNearestEdge() {
+        guard !isOnboardingMode else { return }
         if NSEvent.pressedMouseButtons & 1 != 0 {
             scheduleSnapToNearestEdge()
             return
@@ -355,6 +374,7 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     private func scheduleSnapToNearestEdge() {
+        guard !isOnboardingMode else { return }
         pendingSnapWorkItem?.cancel()
 
         let workItem = DispatchWorkItem { [weak self] in
@@ -363,6 +383,99 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
 
         pendingSnapWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.04, execute: workItem)
+    }
+
+    /// Animates the panel in from an arbitrary starting rect (e.g. the onboarding
+    /// window's embedded panel) to its final docked collapsed frame. Called once
+    /// at onboarding completion so the real panel appears to "emerge" from where
+    /// the user was just interacting.
+    func flyInFromCenter(from originFrame: NSRect) {
+        guard !isOnboardingMode, let panel, let screen = bestScreen(for: originFrame) ?? NSScreen.main else { return }
+
+        pendingSnapWorkItem?.cancel()
+        isProgrammaticMove = true
+
+        // Make sure `currentAnchor` reflects a valid docked position. Without
+        // this, a brand-new PanelManager whose `setup(contentView:)` just ran
+        // may still hold the stale default (`anchorY: 0`), which clamps the
+        // destination to the bottom of the screen instead of the intended top.
+        ensureDefaultAnchor(on: screen)
+
+        // Start at the onboarding-window rect with the panel fully expanded so
+        // the handoff reads as continuous.
+        panel.setFrame(originFrame, display: true)
+        isCollapsed = false
+        panel.orderFront(nil)
+
+        let destination = dockedCollapsedFrame(for: currentAnchor, on: screen)
+        withAnimation(PanelMotion.stateAnimation) {
+            isCollapsed = true
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = PanelMotion.frameAnimationDuration
+            context.timingFunction = PanelMotion.frameTiming
+            context.allowsImplicitAnimation = true
+            panel.animator().setFrame(destination, display: true)
+        } completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                self?.isProgrammaticMove = false
+                self?.syncHoverStateWithPointerLocation(applyState: true)
+            }
+        }
+    }
+
+    /// Places the panel at the docked collapsed frame for `anchor` and
+    /// brings it on screen without animation. Used by the Alt Onboarding
+    /// handoff — the stage already animated its fake panel into place,
+    /// so the real panel just materializes at the same spot.
+    func revealDocked(at anchor: EdgeAnchor) {
+        guard !isOnboardingMode,
+              let panel,
+              let screen = NSScreen.main
+        else { return }
+
+        pendingSnapWorkItem?.cancel()
+
+        // Disable animations on the state change. ContentView listens
+        // to `isCollapsed` via `.animation(_, value:)` — if the panel
+        // was left expanded before Alt Onboarding hid it, a bare
+        // `isCollapsed = true` here would run an expand→collapse
+        // animation on reveal, producing a visible twitch.
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            isCollapsed = true
+            currentAnchor = anchor
+        }
+
+        // Skip the shared `positionAtAnchor(animated: false)` path
+        // because it async-schedules `syncHoverStateWithPointerLocation`
+        // which, if the user's cursor happens to be over the docked
+        // spot, immediately re-triggers `expand()` with its own
+        // animation — the exact jitter we're trying to avoid.
+        isProgrammaticMove = true
+        let newFrame = frame(for: anchor, on: screen)
+        panel.setFrame(newFrame, display: true)
+        persistAnchor(anchor, screen: screen)
+        panel.orderFront(nil)
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                self?.isProgrammaticMove = false
+            }
+        }
+    }
+
+    /// If the current anchor hasn't been initialized to a valid screen position
+    /// yet, replace it with the persisted anchor (if any) or the default for
+    /// this screen. Does NOT animate the panel — pure state update.
+    private func ensureDefaultAnchor(on screen: NSScreen) {
+        let needsDefault = currentAnchor.anchorY == 0
+        guard needsDefault else { return }
+        if let (persisted, _) = loadPersistedAnchor() {
+            currentAnchor = EdgeAnchor(edge: persisted.edge, vertical: persisted.vertical, anchorY: persisted.anchorY)
+        } else {
+            currentAnchor = defaultAnchor(for: screen)
+        }
     }
 
     func windowWillStartLiveResize(_ notification: Notification) {
@@ -615,6 +728,12 @@ class PanelManager: NSObject, ObservableObject, NSWindowDelegate {
     // MARK: - Hover
 
     private func handlePointerHoverChange(_ isHovered: Bool) {
+        // Onboarding stage has no NSPanel, so `isPointerInsidePanel` is
+        // always false — that would cause `popHoverHold()` (fired when
+        // the user submits a task and the input clears) to schedule a
+        // phantom collapse. Let the onboarding scene control collapse
+        // explicitly instead.
+        guard !isOnboardingMode else { return }
         pendingHoverWorkItem?.cancel()
         isPointerInsidePanel = pointerIsWithinHoverSafeArea()
 

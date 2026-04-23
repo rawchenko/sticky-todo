@@ -265,6 +265,7 @@ struct ContentView: View {
     @ObservedObject var store: TodoStore
     @ObservedObject var panelManager: PanelManager
     @ObservedObject private var tweaks = LayoutTweaks.shared
+    @EnvironmentObject private var onboarding: OnboardingMode
     @StateObject private var taskListScrollController = TaskListScrollController()
     @State private var pendingToggleAnimations: [UUID: PendingToggleAnimation] = [:]
     @State private var newTaskTitle = ""
@@ -330,7 +331,7 @@ struct ContentView: View {
                 panelRadius: tweaks.panelCornerRadius
             )
 
-            ZStack(alignment: panelManager.currentAnchor.edge.alignment) {
+            ZStack(alignment: transitionAlignment) {
                 PanelGlassBackground(shape: shape)
                     .allowsHitTesting(false)
 
@@ -344,7 +345,7 @@ struct ContentView: View {
             .frame(
                 width: proxy.size.width,
                 height: proxy.size.height,
-                alignment: panelManager.currentAnchor.edge.alignment
+                alignment: transitionAlignment
             )
             .clipShape(shape)
         }
@@ -464,7 +465,7 @@ struct ContentView: View {
             .compositingGroup()
             .blur(radius: expandedBlur)
             .opacity(expandedOpacity)
-            .scaleEffect(expandedScale, anchor: panelManager.currentAnchor.edge.unitPoint)
+            .scaleEffect(expandedScale, anchor: transitionAnchor)
             .allowsHitTesting(expansionProgress > 0.72)
             .accessibilityHidden(expansionProgress < 0.3)
     }
@@ -508,6 +509,7 @@ struct ContentView: View {
                 if shouldShowNoListsEmptyState {
                     HStack(alignment: .top, spacing: 6) {
                         EmptyListHeaderPill(action: createList)
+                            .disabled(!onboarding.allowsNewListAction)
                         Spacer(minLength: 0)
                     }
                 } else {
@@ -531,14 +533,16 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             HStack(alignment: .top, spacing: 2) {
-                if store.canUndo {
+                if store.canUndo && onboarding.allowsUndo {
                     UndoButton(undoTick: undoTick, action: performUndo)
                         .transition(.asymmetric(
                             insertion: .scale(scale: 0.85).combined(with: .opacity),
                             removal: .scale(scale: 0.85).combined(with: .opacity)
                         ))
                 }
-                SettingsButton()
+                if onboarding.allowsSettings {
+                    SettingsButton()
+                }
             }
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.82), value: store.canUndo)
@@ -826,6 +830,7 @@ struct ContentView: View {
             completionOverride: pendingToggleAnimation?.targetCompleted,
             isExiting: pendingToggleAnimation != nil,
             onToggle: {
+                guard onboarding.allowsCompleteToggle else { return }
                 if isInMultiSelection {
                     performBulkToggle()
                 } else {
@@ -873,8 +878,8 @@ struct ContentView: View {
                     }
                 }
             },
-            isToggleEnabled: !isTrashItem && pendingToggleAnimation == nil && draggingID == nil,
-            isReorderEnabled: isReorderEnabled ?? !store.isSpecialListSelected,
+            isToggleEnabled: !isTrashItem && pendingToggleAnimation == nil && draggingID == nil && onboarding.allowsCompleteToggle,
+            isReorderEnabled: (isReorderEnabled ?? !store.isSpecialListSelected) && onboarding.allowsDragReorder,
             isSelected: selectedItemIDs.contains(item.id),
             hasSelectedNeighborAbove: hasNeighborAbove,
             hasSelectedNeighborBelow: hasNeighborBelow,
@@ -894,39 +899,16 @@ struct ContentView: View {
     }
 
     private var inputBar: some View {
-        HStack(alignment: .bottom, spacing: 10) {
-            AutoGrowingInputField(
-                text: $newTaskTitle,
-                placeholder: inputPlaceholder,
-                font: NSFont.systemFont(ofSize: tweaks.bodyTextSize),
-                textColor: NSColor(FloatListTheme.textPrimary),
-                placeholderColor: .placeholderTextColor,
-                maxLines: 5,
-                onSubmit: submitTask
-            )
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-
-            Button(action: submitTask) {
-                Image(systemName: "arrow.up")
-            }
-            .floatListGlassButton(prominent: hasInputDraft)
-            .disabled(!hasInputDraft)
-            .pointerCursor(hasInputDraft ? .pointingHand : nil)
-            .animation(.easeInOut(duration: 0.15), value: hasInputDraft)
-        }
-        .padding(.leading, tweaks.inputLeadingPadding)
-        .padding(.trailing, tweaks.inputTrailingPadding)
-        .padding(.vertical, tweaks.inputVerticalPadding)
-        .background(
-            RoundedRectangle(cornerRadius: tweaks.inputCornerRadius, style: .continuous).fill(FloatListTheme.inputFill)
+        ScriptableInputBar(
+            userText: $newTaskTitle,
+            placeholder: inputPlaceholder,
+            font: NSFont.systemFont(ofSize: tweaks.bodyTextSize),
+            onSubmit: submitTask
         )
-        .padding(.horizontal, 6)
-        .padding(.bottom, 6)
-        .animation(.easeOut(duration: 0.18), value: newTaskTitle)
     }
 
     private func submitTask() {
+        guard onboarding.allowsNewTodoInput else { return }
         let trimmed = newTaskTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         store.add(title: trimmed)
@@ -1109,6 +1091,7 @@ struct ContentView: View {
     }
 
     private func handleSelectionKeyEvent(_ event: NSEvent) -> NSEvent? {
+        guard onboarding.allowsSelectionShortcuts else { return event }
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let isCmdOnly = modifiers == .command
         let isBare = modifiers.isEmpty
@@ -1149,7 +1132,7 @@ struct ContentView: View {
             .compositingGroup()
             .blur(radius: collapsedBlur)
             .opacity(collapsedOpacity)
-            .scaleEffect(collapsedScale, anchor: panelManager.currentAnchor.edge.unitPoint)
+            .scaleEffect(collapsedScale, anchor: transitionAnchor)
             .offset(collapsedOffset)
             .allowsHitTesting(false)
             .accessibilityHidden(expansionProgress > 0.7)
@@ -1168,10 +1151,16 @@ struct ContentView: View {
     }
 
     private var collapsedOpacity: CGFloat {
+        if onboarding.isActive {
+            // Fade the glyph out by the halfway point of the expansion so
+            // it's not lingering over the revealed panel. The heavier
+            // transition blur (below) hides the cross-fade midpoint.
+            return smoothstep((0.50 - expansionProgress) / 0.50)
+        }
         // Fade runs ahead of `expansionProgress` (x1.55) so the glyph clears
         // the frame before the expanded layer reaches full opacity, letting
         // the two cross through the blurred midpoint instead of stacking.
-        smoothstep((1 - expansionProgress) * 1.55)
+        return smoothstep((1 - expansionProgress) * 1.55)
     }
 
     private var collapsedScale: CGFloat {
@@ -1179,19 +1168,45 @@ struct ContentView: View {
     }
 
     private var collapsedOffset: CGSize {
-        CGSize(
+        // In the onboarding stage the panel sits centered in the window
+        // rather than docked to a screen edge, so the edge-directional
+        // "puff" offset would just drag the glyph sideways during the
+        // hover transition. Zero it out there.
+        guard !onboarding.isActive else { return .zero }
+        return CGSize(
             width: transitionOffset.width * expansionProgress * 0.32,
             height: transitionOffset.height * expansionProgress * 0.32
         )
     }
 
+    /// Unit point that both the collapsed glyph and expanded layer scale
+    /// around. Production panels scale toward their dock edge so the
+    /// transition flows outward from there; the onboarding stage is
+    /// centered, so we pin the anchor to `.center` for symmetric growth.
+    private var transitionAnchor: UnitPoint {
+        onboarding.isActive ? .center : panelManager.currentAnchor.edge.unitPoint
+    }
+
+    /// Alignment for the outer panel ZStack + frame. Production panels
+    /// pin their collapsed glyph and expanded content to the docked
+    /// screen edge so the frame change doesn't drift toward the centre
+    /// of the screen; the onboarding stage has no dock edge, so the
+    /// content stays centred as the frame grows.
+    private var transitionAlignment: Alignment {
+        onboarding.isActive ? .center : panelManager.currentAnchor.edge.alignment
+    }
+
     private var expandedBlur: CGFloat {
         let remaining = 1 - expansionProgress
-        return remaining * remaining * PanelMotion.expandedTransitionBlur
+        // The onboarding stage leans on a heavier blur so the mid-transition
+        // reads as a soft morph rather than a readable-but-blurry layout.
+        let maxBlur: CGFloat = onboarding.isActive ? 36 : PanelMotion.expandedTransitionBlur
+        return remaining * remaining * maxBlur
     }
 
     private var collapsedBlur: CGFloat {
-        expansionProgress * expansionProgress * PanelMotion.collapsedTransitionBlur
+        let maxBlur: CGFloat = onboarding.isActive ? 28 : PanelMotion.collapsedTransitionBlur
+        return expansionProgress * expansionProgress * maxBlur
     }
 
     private var transitionOffset: CGSize {
@@ -1245,15 +1260,11 @@ struct ContentView: View {
     }
 
     private var inlineEmptyState: some View {
-        VStack(spacing: 8) {
-            Text("Start anywhere.")
-                .font(.system(size: 24, weight: .regular, design: .serif).italic())
-                .tracking(-0.48)
-                .foregroundStyle(FloatListTheme.textPrimary.opacity(0.95))
-
-            Text(hasInputDraft ? "Press ⏎ to add" : "Type a task below")
-                .font(.system(size: tweaks.bodyTextSize))
+        VStack(spacing: 0) {
+            Text(hasInputDraft ? "Press ⏎ to add" : "Start typing\nto create a new item")
+                .font(.system(size: tweaks.bodyTextSize).italic())
                 .foregroundStyle(FloatListTheme.textSecondary)
+                .multilineTextAlignment(.center)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 18)
@@ -1266,8 +1277,10 @@ struct ContentView: View {
         let expanded = isCompletedExpanded(for: listID)
         let isDraggingTask = draggingID != nil
         let isHovering = !isDraggingTask && hoveredCompletedToggleListID == listID
+        let isDisabled = isDraggingTask || !onboarding.allowsShowCompletedToggle
 
         return Button {
+            guard onboarding.allowsShowCompletedToggle else { return }
             withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
                 toggleCompletedSection(for: listID)
             }
@@ -1291,10 +1304,10 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .background(WindowDragBlocker())
-        .pointerCursor(isDraggingTask ? nil : .pointingHand)
-        .allowsHitTesting(!isDraggingTask)
+        .pointerCursor(isDisabled ? nil : .pointingHand)
+        .allowsHitTesting(!isDisabled)
         .onHover { hovering in
-            guard !isDraggingTask else {
+            guard !isDisabled else {
                 hoveredCompletedToggleListID = nil
                 return
             }
@@ -1657,7 +1670,7 @@ struct ContentView: View {
                   !event.modifierFlags.contains(.option),
                   !event.modifierFlags.contains(.control)
             else { return event }
-            guard store.canUndo else { return event }
+            guard onboarding.allowsUndo, store.canUndo else { return event }
             performUndo()
             return nil
         }

@@ -35,14 +35,18 @@ class TodoStore: ObservableObject {
 
     private let fileURL: URL
     private let fileManager: FileManager
+    private let inMemory: Bool
     private var isStorageWritable = true
     private var isBatching = false
 
-    init(fileURL: URL? = nil, fileManager: FileManager = .default) {
+    init(fileURL: URL? = nil, fileManager: FileManager = .default, inMemory: Bool = false) {
         self.fileManager = fileManager
         self.fileURL = fileURL ?? Self.defaultFileURL(fileManager: fileManager)
-        let directoryURL = self.fileURL.deletingLastPathComponent()
-        try? fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
+        self.inMemory = inMemory
+        if !inMemory {
+            let directoryURL = self.fileURL.deletingLastPathComponent()
+            try? fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
+        }
         load()
     }
 
@@ -99,7 +103,7 @@ class TodoStore: ObservableObject {
     func load() {
         defer { ensureDefaultInboxIfEmpty() }
 
-        guard fileManager.fileExists(atPath: fileURL.path) else {
+        if inMemory || !fileManager.fileExists(atPath: fileURL.path) {
             items = []
             lists = []
             selectedListID = nil
@@ -141,6 +145,7 @@ class TodoStore: ObservableObject {
     }
 
     func save() {
+        guard !inMemory else { return }
         guard isStorageWritable else { return }
         guard !isBatching else { return }
         let file = TodoStoreFile(

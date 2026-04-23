@@ -31,6 +31,7 @@ struct ListsDropdownView: View {
     @FocusState private var isEditorFocused: Bool
     @ObservedObject private var tweaks = LayoutTweaks.shared
     @EnvironmentObject private var panelManager: PanelManager
+    @EnvironmentObject private var onboarding: OnboardingMode
 
     private static let reorderCoordinateSpace = "listsMenu"
     private static let reorderAnimation = Animation.spring(response: 0.28, dampingFraction: 0.86)
@@ -204,6 +205,7 @@ struct ListsDropdownView: View {
             isTriggerPressed = pressing
         }
         .onTapGesture {
+            guard onboarding.allowsListDropdownOpen else { return }
             isShowingMenu.toggle()
         }
         .accessibilityElement(children: .ignore)
@@ -276,81 +278,97 @@ struct ListsDropdownView: View {
                 }
             }
 
-            DropdownActionRow(
-                title: "New list",
-                systemImage: "folder.fill.badge.plus",
-                action: {
-                    isShowingMenu = false
-                    DispatchQueue.main.async { onCreate() }
-                }
-            )
-
-            Divider()
-                .padding(.vertical, 4)
-
-            ForEach(specialLists) { item in
-                DropdownListRow(
-                    list: item,
-                    isSelected: item.id == current.id,
-                    coordinateSpace: "",
-                    onTap: {
+            if onboarding.allowsNewListAction {
+                DropdownActionRow(
+                    title: "New list",
+                    systemImage: "folder.fill.badge.plus",
+                    action: {
                         isShowingMenu = false
-                        if item.id != current.id {
-                            onSelect(item.id)
-                        }
+                        DispatchQueue.main.async { onCreate() }
                     }
                 )
             }
 
-            if current.id == trashList.id || !isSpecialList(current) {
+            let showSpecialLists = onboarding.allowsListSelection
+            if showSpecialLists {
+                Divider()
+                    .padding(.vertical, 4)
+
+                ForEach(specialLists) { item in
+                    DropdownListRow(
+                        list: item,
+                        isSelected: item.id == current.id,
+                        coordinateSpace: "",
+                        onTap: {
+                            isShowingMenu = false
+                            if item.id != current.id {
+                                onSelect(item.id)
+                            }
+                        }
+                    )
+                }
+            }
+
+            let showManagement = !isSpecialList(current) && (onboarding.allowsListManagement || onboarding.allowsListColorPicker || onboarding.allowsDeleteList)
+            let showTrashActions = current.id == trashList.id && onboarding.allowsEmptyTrash
+
+            if showTrashActions || showManagement {
                 Divider()
                     .padding(.vertical, 4)
             }
 
             if current.id == trashList.id {
-                DropdownActionRow(
-                    title: "Empty Trash",
-                    systemImage: "trash",
-                    role: .destructive,
-                    action: {
-                        isShowingMenu = false
-                        onEmptyTrash()
-                    }
-                )
+                if onboarding.allowsEmptyTrash {
+                    DropdownActionRow(
+                        title: "Empty Trash",
+                        systemImage: "trash",
+                        role: .destructive,
+                        action: {
+                            isShowingMenu = false
+                            onEmptyTrash()
+                        }
+                    )
+                }
             } else if !isSpecialList(current) {
-                DropdownActionRow(
-                    title: "Rename",
-                    systemImage: "pencil",
-                    action: {
-                        isShowingMenu = false
-                        DispatchQueue.main.async { beginEdit(current) }
-                    }
-                )
-                DropdownActionRow(
-                    title: "Change icon",
-                    systemImage: "square.grid.2x2",
-                    action: {
-                        isShowingMenu = false
-                        DispatchQueue.main.async { isShowingIconPicker = true }
-                    }
-                )
-                DropdownActionRow(
-                    title: "Change color",
-                    systemImage: "paintpalette",
-                    action: {
-                        isShowingMenu = false
-                        DispatchQueue.main.async { isShowingColorPicker = true }
-                    }
-                )
-                DropdownActionRow(
-                    title: "Delete list",
-                    systemImage: "trash",
-                    role: .destructive,
-                    action: {
-                        isShowingMenu = false
-                        onDelete(current)
-                    }
-                )
+                if onboarding.allowsListManagement {
+                    DropdownActionRow(
+                        title: "Rename",
+                        systemImage: "pencil",
+                        action: {
+                            isShowingMenu = false
+                            DispatchQueue.main.async { beginEdit(current) }
+                        }
+                    )
+                    DropdownActionRow(
+                        title: "Change icon",
+                        systemImage: "square.grid.2x2",
+                        action: {
+                            isShowingMenu = false
+                            DispatchQueue.main.async { isShowingIconPicker = true }
+                        }
+                    )
+                }
+                if onboarding.allowsListColorPicker {
+                    DropdownActionRow(
+                        title: "Change color",
+                        systemImage: "paintpalette",
+                        action: {
+                            isShowingMenu = false
+                            DispatchQueue.main.async { isShowingColorPicker = true }
+                        }
+                    )
+                }
+                if onboarding.allowsDeleteList {
+                    DropdownActionRow(
+                        title: "Delete list",
+                        systemImage: "trash",
+                        role: .destructive,
+                        action: {
+                            isShowingMenu = false
+                            onDelete(current)
+                        }
+                    )
+                }
             }
         }
         .coordinateSpace(name: Self.reorderCoordinateSpace)
@@ -400,6 +418,7 @@ struct ListsDropdownView: View {
             coordinateSpace: Self.reorderCoordinateSpace,
             onTap: {
                 guard dragSession == nil else { return }
+                guard onboarding.allowsListSelection else { return }
                 isShowingMenu = false
                 if item.id != current.id {
                     onSelect(item.id)
@@ -423,7 +442,7 @@ struct ListsDropdownView: View {
     // MARK: - Drag
 
     private func handleMenuDragChanged(start: CGPoint, translation: CGFloat) {
-        guard lists.count > 1 else { return }
+        guard lists.count > 1, onboarding.allowsListReorder else { return }
 
         if let session = dragSession {
             updateDrag(for: session.list.id, translation: translation)

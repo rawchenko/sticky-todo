@@ -19,6 +19,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// which returns nil under `@NSApplicationDelegateAdaptor` in some setups.
     static private(set) weak var shared: AppDelegate?
 
+    private var store: TodoStore?
     private var panelManager: PanelManager?
     private var statusItem: NSStatusItem?
     private var hotkeyObserver: NSObjectProtocol?
@@ -26,6 +27,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: NSWindow?
     private var settingsCloseObserver: NSObjectProtocol?
     private var wasAccessoryBeforeSettings = false
+    private var onboardingPresenter: AppOnboardingPresenter?
+    private let onboardingMode = OnboardingMode(isActive: false)
+    private let scriptedInput = ScriptedInputBuffer()
 
     override init() {
         super.init()
@@ -36,13 +40,96 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         AppearanceMode.current.apply()
 
         let store = TodoStore()
+        self.store = store
+        setupStatusBarItem()
+        registerHotkeyObservers()
+
+        if UserDefaults.standard.bool(forKey: OnboardingDefaults.completedKey) {
+            presentRealPanel(store: store)
+        } else {
+            presentConfiguredOnboarding()
+        }
+    }
+
+    private func presentRealPanel(store: TodoStore, flyInFrom originFrame: NSRect? = nil) {
         let manager = PanelManager()
         let contentView = ContentView(store: store, panelManager: manager)
+            .environmentObject(onboardingMode)
+            .environmentObject(scriptedInput)
         manager.setup(contentView: contentView)
-        manager.showPanel()
         self.panelManager = manager
-        setupStatusBarItem()
 
+        if let originFrame {
+            manager.flyInFromCenter(from: originFrame)
+        } else {
+            manager.showPanel()
+        }
+    }
+
+    private func presentConfiguredOnboarding() {
+        guard let store else { return }
+        let presenter = AppOnboardingPresenter()
+        onboardingPresenter = presenter
+        presenter.present(
+            variant: OnboardingConfiguration.activeVariant,
+            realStore: store,
+            onComplete: { [weak self] completion in
+                MainActor.assumeIsolated {
+                    self?.handleOnboardingCompletion(completion)
+                }
+            },
+            onClose: { [weak self, weak presenter] in
+                MainActor.assumeIsolated {
+                    guard let self, self.onboardingPresenter === presenter else { return }
+                    self.onboardingPresenter = nil
+                }
+            }
+        )
+    }
+
+    private func handleOnboardingCompletion(_ completion: AppOnboardingPresenter.Completion) {
+        guard let store else { return }
+
+        switch completion {
+        case .showPanel(let originFrame):
+            guard panelManager == nil else { return }
+            presentRealPanel(store: store, flyInFrom: originFrame)
+            NSApp.setActivationPolicy(.accessory)
+        case .revealDocked(let anchor):
+            UserDefaults.standard.set(true, forKey: OnboardingDefaults.completedKey)
+            if panelManager == nil {
+                presentRealPanel(store: store)
+            }
+            NSApp.setActivationPolicy(.accessory)
+            panelManager?.revealDocked(at: anchor)
+        }
+    }
+
+    func restartOnboarding() {
+        guard store != nil else { return }
+        guard onboardingPresenter?.isPresenting != true else { return }
+
+        UserDefaults.standard.set(false, forKey: OnboardingDefaults.completedKey)
+
+        // Close Settings so it doesn't bleed through the full-screen onboarding.
+        if let settings = settingsWindow {
+            settings.close()
+            settingsWindow = nil
+        }
+        if let observer = settingsCloseObserver {
+            NotificationCenter.default.removeObserver(observer)
+            settingsCloseObserver = nil
+        }
+
+        if let panel = panelManager {
+            panel.hidePanel()
+            panelManager = nil
+        }
+
+        presentConfiguredOnboarding()
+    }
+
+    private func registerHotkeyObservers() {
         _ = GlobalHotkey.toggleVisibility
         _ = GlobalHotkey.expandCollapse
         hotkeyObserver = NotificationCenter.default.addObserver(
@@ -51,7 +138,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.panelManager?.togglePanel()
+                guard let self, self.onboardingPresenter?.isPresenting != true else { return }
+                self.panelManager?.togglePanel()
             }
         }
         expandHotkeyObserver = NotificationCenter.default.addObserver(
@@ -60,7 +148,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.panelManager?.showOrToggleExpansion()
+                guard let self, self.onboardingPresenter?.isPresenting != true else { return }
+                self.panelManager?.showOrToggleExpansion()
             }
         }
     }
