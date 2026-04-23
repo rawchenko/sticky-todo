@@ -116,10 +116,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             settings.close()
             settingsWindow = nil
         }
-        if let observer = settingsCloseObserver {
-            NotificationCenter.default.removeObserver(observer)
-            settingsCloseObserver = nil
-        }
+        removeSettingsCloseObserver()
 
         if let panel = panelManager {
             panel.hidePanel()
@@ -151,18 +148,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self, self.onboardingPresenter?.isPresenting != true else { return }
                 self.panelManager?.showOrToggleExpansion()
             }
-        }
-    }
-
-    deinit {
-        if let observer = hotkeyObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        if let observer = expandHotkeyObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        if let observer = settingsCloseObserver {
-            NotificationCenter.default.removeObserver(observer)
         }
     }
 
@@ -235,14 +220,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleSettingsWindowClose() {
-        if let observer = settingsCloseObserver {
-            NotificationCenter.default.removeObserver(observer)
-            settingsCloseObserver = nil
-        }
+        removeSettingsCloseObserver()
         settingsWindow = nil
         if wasAccessoryBeforeSettings {
             NSApp.setActivationPolicy(.accessory)
             wasAccessoryBeforeSettings = false
+        }
+    }
+
+    private func removeSettingsCloseObserver() {
+        if let observer = settingsCloseObserver {
+            NotificationCenter.default.removeObserver(observer)
+            settingsCloseObserver = nil
         }
     }
 

@@ -91,19 +91,54 @@ struct TodoList: Identifiable, Codable, Equatable {
         createdAt = try container.decode(Date.self, forKey: .createdAt)
 
         let decoded = try container.decodeIfPresent(String.self, forKey: .icon)
-        icon = TodoList.sanitize(decoded)
+        icon = TodoList.sanitizeDecodedIcon(decoded)
         iconColor = try container.decodeIfPresent(ListIconColor.self, forKey: .iconColor)
     }
 
     /// Accept only SF Symbol names; fall back to the default for empty strings
     /// or legacy emoji values carried over from older stores.
     static func sanitize(_ raw: String?) -> String {
-        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !trimmed.isEmpty,
+        guard let trimmed = normalizedIcon(raw),
               NSImage(systemSymbolName: trimmed, accessibilityDescription: nil) != nil
         else {
             return defaultIcon
         }
         return trimmed
     }
+
+    /// Keep decode thread-agnostic by avoiding AppKit lookups here. We still
+    /// normalize empties to the default icon and reject obvious legacy / junk
+    /// values so stored emoji icons do not leak back into the UI.
+    static func sanitizeDecodedIcon(_ raw: String?) -> String {
+        guard let trimmed = normalizedIcon(raw),
+              isLikelyStoredSymbolName(trimmed)
+        else {
+            return defaultIcon
+        }
+        return trimmed
+    }
+
+    private static func normalizedIcon(_ raw: String?) -> String? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty
+        else {
+            return nil
+        }
+        return trimmed
+    }
+
+    private static func isLikelyStoredSymbolName(_ raw: String) -> Bool {
+        guard raw.count <= 128,
+              !raw.hasPrefix("."),
+              !raw.hasSuffix("."),
+              !raw.contains(".."),
+              raw.unicodeScalars.allSatisfy({ allowedIconScalars.contains($0) }),
+              raw.unicodeScalars.contains(where: CharacterSet.letters.contains)
+        else {
+            return false
+        }
+        return true
+    }
+
+    private static let allowedIconScalars = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-")
 }

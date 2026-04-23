@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import AppKit
+import Darwin
 
 struct TodoStoreRecoveryNotice: Identifiable, Equatable {
     let id = UUID()
@@ -15,8 +16,18 @@ struct TodoStoreFile: Codable {
     var selectedListID: UUID?
 }
 
-class TodoStore: ObservableObject {
+@MainActor
+final class TodoStore: ObservableObject {
     static let currentSchemaVersion = 4
+    static let maxTodoTitleLength = 280
+    static let maxListNameLength = 80
+
+    private static let storeLoadMaxBytes: Int = 5 * 1024 * 1024
+
+    private enum StoreLoadIssue: Error {
+        case unsupportedFileType
+        case fileTooLarge(Int)
+    }
 
     @Published var items: [TodoItem] = []
     @Published var lists: [TodoList] = []
@@ -39,15 +50,30 @@ class TodoStore: ObservableObject {
     private var isStorageWritable = true
     private var isBatching = false
 
+    var isReadOnly: Bool {
+        !isStorageWritable
+    }
+
     init(fileURL: URL? = nil, fileManager: FileManager = .default, inMemory: Bool = false) {
         self.fileManager = fileManager
+        let usesDefaultFileURL = fileURL == nil
         self.fileURL = fileURL ?? Self.defaultFileURL(fileManager: fileManager)
         self.inMemory = inMemory
+        var didMigrateLegacyStore = false
         if !inMemory {
             let directoryURL = self.fileURL.deletingLastPathComponent()
             try? fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
+            if usesDefaultFileURL {
+                didMigrateLegacyStore = migrateLegacyStoreIfNeeded()
+            }
         }
         load()
+        if didMigrateLegacyStore, recoveryNotice == nil {
+            recoveryNotice = TodoStoreRecoveryNotice(
+                message: "Migrated existing data from previous install.",
+                backupURL: nil
+            )
+        }
     }
 
     var visibleItems: [TodoItem] {
@@ -113,19 +139,32 @@ class TodoStore: ObservableObject {
         }
 
         do {
-            let data = try Data(contentsOf: fileURL)
+            let data = try loadStoreData()
 
             if let file = try? JSONDecoder().decode(TodoStoreFile.self, from: data) {
-                lists = file.lists
-                items = file.todos
+                if file.schemaVersion > Self.currentSchemaVersion {
+                    presentUnsupportedSchemaVersion(file.schemaVersion)
+                    return
+                }
+                // Add explicit per-version migrations here when a future schema bump breaks backward compatibility.
+                let sanitized = Self.sanitizeDecoded(lists: file.lists, items: file.todos)
+                lists = sanitized.lists
+                items = sanitized.items
                 selectedListID = normalizedSelection(file.selectedListID)
                 isStorageWritable = true
-                recoveryNotice = nil
+                recoveryNotice = sanitized.didFixUp
+                    ? TodoStoreRecoveryNotice(
+                        message: "Your todo file contained invalid entries that were cleaned up.",
+                        backupURL: nil
+                    )
+                    : nil
                 return
             }
 
             let legacyItems = try JSONDecoder().decode([TodoItem].self, from: data)
             migrateFromLegacy(legacyItems)
+        } catch let issue as StoreLoadIssue {
+            presentBlockedStore(issue)
         } catch {
             recoverUnreadableStore(after: error)
         }
@@ -161,6 +200,7 @@ class TodoStore: ObservableObject {
     // MARK: - Undo
 
     private func captureUndoSnapshot() {
+        guard !isReadOnly else { return }
         guard !isBatching else { return }
         undoStack.append(UndoSnapshot(items: items, lists: lists, selectedListID: selectedListID))
         if undoStack.count > undoStackLimit {
@@ -170,6 +210,7 @@ class TodoStore: ObservableObject {
     }
 
     private func performBatch(_ body: () -> Void) {
+        guard !isReadOnly else { return }
         captureUndoSnapshot()
         isBatching = true
         body()
@@ -178,6 +219,7 @@ class TodoStore: ObservableObject {
     }
 
     func undo() {
+        guard !isReadOnly else { return }
         guard let snapshot = undoStack.popLast() else { return }
         items = snapshot.items
         lists = snapshot.lists
@@ -199,6 +241,7 @@ class TodoStore: ObservableObject {
     /// No-op when `incoming` is empty, so it's safe to call on close
     /// even if the user didn't add anything.
     func importOnboardingItems(_ incoming: [TodoItem]) {
+        guard !isReadOnly else { return }
         guard !incoming.isEmpty else { return }
         let inboxID = TodoList.inboxID
         let inboxName = TodoList.inboxName
@@ -230,8 +273,8 @@ class TodoStore: ObservableObject {
     // MARK: - Todos
 
     func add(title: String) {
-        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !isReadOnly else { return }
+        guard let trimmed = Self.normalizedTodoTitleInput(title) else { return }
         guard let listID = selectedListID else { return }
         guard !isSpecialListID(listID) else { return }
         captureUndoSnapshot()
@@ -240,8 +283,8 @@ class TodoStore: ObservableObject {
     }
 
     func rename(_ item: TodoItem, to newTitle: String) {
-        let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !isReadOnly else { return }
+        guard let trimmed = Self.normalizedTodoTitleInput(newTitle) else { return }
         guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
         guard items[idx].title != trimmed else { return }
         captureUndoSnapshot()
@@ -250,6 +293,7 @@ class TodoStore: ObservableObject {
     }
 
     func toggle(_ item: TodoItem) {
+        guard !isReadOnly else { return }
         guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
         guard let listID = items[idx].listID, !isSpecialListID(listID) else { return }
 
@@ -271,6 +315,7 @@ class TodoStore: ObservableObject {
     }
 
     func moveToTrash(_ item: TodoItem) {
+        guard !isReadOnly else { return }
         guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
         captureUndoSnapshot()
         moveItemToTrash(at: idx)
@@ -278,6 +323,7 @@ class TodoStore: ObservableObject {
     }
 
     func restore(_ item: TodoItem) {
+        guard !isReadOnly else { return }
         guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
         guard items[idx].isTrashed else { return }
 
@@ -302,6 +348,7 @@ class TodoStore: ObservableObject {
     }
 
     func permanentlyDelete(_ item: TodoItem) {
+        guard !isReadOnly else { return }
         guard items.contains(where: { $0.id == item.id }) else { return }
         captureUndoSnapshot()
         items.removeAll { $0.id == item.id }
@@ -312,6 +359,7 @@ class TodoStore: ObservableObject {
     }
 
     func emptyTrash() {
+        guard !isReadOnly else { return }
         guard hasTrashedItems else { return }
         captureUndoSnapshot()
         items.removeAll(where: { $0.isTrashed })
@@ -339,6 +387,7 @@ class TodoStore: ObservableObject {
     /// Reorder an item within the currently selected list. Indices refer to
     /// positions in the visible incomplete items of the selected regular list.
     func move(from: Int, to: Int) {
+        guard !isReadOnly else { return }
         guard let listID = selectedListID else { return }
         guard !isSpecialListID(listID) else { return }
         let listItems = activeItems(in: listID)
@@ -374,6 +423,7 @@ class TodoStore: ObservableObject {
         filter: (TodoItem) -> Bool,
         action: (TodoItem) -> Void
     ) {
+        guard !isReadOnly else { return }
         let targets = items.filter(filter)
         guard !targets.isEmpty else { return }
         performBatch {
@@ -396,6 +446,7 @@ class TodoStore: ObservableObject {
     }
 
     func permanentlyDeleteMany(_ items: [TodoItem]) {
+        guard !isReadOnly else { return }
         let ids = Set(items.map { $0.id })
         guard !ids.isEmpty, self.items.contains(where: { ids.contains($0.id) }) else { return }
         performBatch {
@@ -418,9 +469,9 @@ class TodoStore: ObservableObject {
 
     @discardableResult
     func addList(name: String, icon: String = TodoList.defaultIcon) -> TodoList {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let finalName = trimmed.isEmpty ? TodoList.defaultName : trimmed
+        let finalName = Self.normalizedListNameInput(name, fallback: TodoList.defaultName)
         let list = TodoList(name: finalName, icon: TodoList.sanitize(icon))
+        guard !isReadOnly else { return list }
         captureUndoSnapshot()
         lists.append(list)
         selectedListID = list.id
@@ -429,8 +480,8 @@ class TodoStore: ObservableObject {
     }
 
     func renameList(_ list: TodoList, to newName: String) {
-        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !isReadOnly else { return }
+        guard let trimmed = Self.normalizedListNameInput(newName) else { return }
         guard let idx = lists.firstIndex(where: { $0.id == list.id }) else { return }
         guard lists[idx].name != trimmed else { return }
         captureUndoSnapshot()
@@ -439,6 +490,7 @@ class TodoStore: ObservableObject {
     }
 
     func setListIcon(_ list: TodoList, to icon: String) {
+        guard !isReadOnly else { return }
         let trimmed = icon.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
               NSImage(systemSymbolName: trimmed, accessibilityDescription: nil) != nil
@@ -451,6 +503,7 @@ class TodoStore: ObservableObject {
     }
 
     func setListColor(_ list: TodoList, to color: ListIconColor?) {
+        guard !isReadOnly else { return }
         guard let idx = lists.firstIndex(where: { $0.id == list.id }) else { return }
         guard lists[idx].iconColor != color else { return }
         captureUndoSnapshot()
@@ -459,6 +512,7 @@ class TodoStore: ObservableObject {
     }
 
     func deleteList(_ list: TodoList) {
+        guard !isReadOnly else { return }
         guard !isSpecialListID(list.id) else { return }
         guard let idx = lists.firstIndex(where: { $0.id == list.id }) else { return }
         captureUndoSnapshot()
@@ -476,6 +530,7 @@ class TodoStore: ObservableObject {
     /// ordering of the destination. No-ops for trashed items, special lists, or
     /// when the target is the item's current list.
     func moveItem(_ item: TodoItem, to targetListID: UUID) {
+        guard !isReadOnly else { return }
         guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
         guard !items[idx].isTrashed else { return }
         guard !isSpecialListID(targetListID) else { return }
@@ -495,6 +550,7 @@ class TodoStore: ObservableObject {
     }
 
     func moveList(from: Int, to: Int) {
+        guard !isReadOnly else { return }
         guard lists.indices.contains(from),
               to >= 0, to < lists.count,
               from != to else { return }
@@ -505,6 +561,7 @@ class TodoStore: ObservableObject {
     }
 
     func selectList(_ id: UUID?) {
+        guard !isReadOnly else { return }
         guard id == nil || isSpecialListID(id) || lists.contains(where: { $0.id == id }) else { return }
         guard selectedListID != id else { return }
         selectedListID = id
@@ -518,6 +575,7 @@ class TodoStore: ObservableObject {
         lists = [defaultList]
         items = legacyItems.map { item in
             var copy = item
+            copy.title = Self.clampedPersistedTodoTitle(copy.title)
             copy.listID = defaultList.id
             copy.trashedAt = nil
             copy.trashedOriginalListID = nil
@@ -555,6 +613,60 @@ class TodoStore: ObservableObject {
             NSLog("FloatList failed to decode todo file: %@", String(describing: decodeError))
             NSLog("FloatList failed to move unreadable todo file to backup: %@", String(describing: error))
         }
+    }
+
+    private func presentBlockedStore(_ issue: StoreLoadIssue) {
+        items = []
+        lists = []
+        selectedListID = nil
+        isStorageWritable = false
+
+        let message: String
+        switch issue {
+        case .unsupportedFileType:
+            message = "Your todo file could not be read as a regular file and was left untouched. Saving is paused to avoid overwriting it."
+        case .fileTooLarge:
+            message = "Your todo file exceeded the supported size and was left untouched. Saving is paused to avoid overwriting it."
+        }
+
+        recoveryNotice = TodoStoreRecoveryNotice(message: message, backupURL: nil)
+
+        switch issue {
+        case .unsupportedFileType:
+            NSLog("FloatList todo file at %@ is not a regular file", fileURL.path)
+        case .fileTooLarge(let bytes):
+            NSLog("FloatList todo file at %@ exceeds max size %@ bytes", fileURL.path, String(bytes))
+        }
+    }
+
+    private func loadStoreData() throws -> Data {
+        let resourceValues = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+
+        if resourceValues.isRegularFile == false {
+            throw StoreLoadIssue.unsupportedFileType
+        }
+
+        if let fileSize = resourceValues.fileSize, fileSize > Self.storeLoadMaxBytes {
+            throw StoreLoadIssue.fileTooLarge(fileSize)
+        }
+
+        return try Data(contentsOf: fileURL, options: [.mappedIfSafe])
+    }
+
+    private func presentUnsupportedSchemaVersion(_ version: Int) {
+        items = []
+        lists = []
+        selectedListID = nil
+        isStorageWritable = false
+        recoveryNotice = TodoStoreRecoveryNotice(
+            message: "Your todo file was created by a newer FloatList version and was left untouched. Saving is paused to avoid overwriting it.",
+            backupURL: nil
+        )
+        NSLog(
+            "FloatList unsupported todo schemaVersion %@ (supported %@)",
+            String(version),
+            String(Self.currentSchemaVersion)
+        )
     }
 
     private func makeBackupURL() -> URL {
@@ -599,8 +711,7 @@ class TodoStore: ObservableObject {
     }
 
     private func restoreListName(for item: TodoItem) -> String {
-        let trimmed = item.trashedOriginalListName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? "Tasks" : trimmed
+        Self.normalizedListNameInput(item.trashedOriginalListName ?? "", fallback: "Tasks")
     }
 
     private func listName(for id: UUID?) -> String? {
@@ -666,9 +777,204 @@ class TodoStore: ObservableObject {
         id == TodoList.completedID || id == TodoList.trashID
     }
 
+    /// Reject persisted lists that impersonate the virtual Trash/Completed
+    /// rows, drop duplicate IDs (keeping the first), and re-home items whose
+    /// `listID` points at a list that no longer exists. Trashed items keep
+    /// their `trashID` listing; the check is purely about regular-list refs.
+    private static func sanitizeDecoded(
+        lists decodedLists: [TodoList],
+        items decodedItems: [TodoItem]
+    ) -> (lists: [TodoList], items: [TodoItem], didFixUp: Bool) {
+        var seenIDs = Set<UUID>()
+        var cleanedLists: [TodoList] = []
+        var didFixUp = false
+
+        for list in decodedLists {
+            if list.id == TodoList.trashID || list.id == TodoList.completedID {
+                didFixUp = true
+                continue
+            }
+            if !seenIDs.insert(list.id).inserted {
+                didFixUp = true
+                continue
+            }
+            var sanitizedList = list
+            let clampedName = normalizedListNameInput(list.name, fallback: TodoList.defaultName)
+            if clampedName != list.name {
+                sanitizedList.name = clampedName
+                didFixUp = true
+            }
+            cleanedLists.append(sanitizedList)
+        }
+
+        var validListIDs = Set(cleanedLists.map(\.id))
+
+        var cleanedItems: [TodoItem] = []
+        cleanedItems.reserveCapacity(decodedItems.count)
+        for item in decodedItems {
+            var sanitizedItem = item
+            let clampedTitle = clampedPersistedTodoTitle(item.title)
+            if clampedTitle != item.title {
+                sanitizedItem.title = clampedTitle
+                didFixUp = true
+            }
+            let clampedOriginalListName = clampedPersistedListName(item.trashedOriginalListName)
+            if clampedOriginalListName != item.trashedOriginalListName {
+                sanitizedItem.trashedOriginalListName = clampedOriginalListName
+                didFixUp = true
+            }
+
+            guard let listID = item.listID else {
+                cleanedItems.append(sanitizedItem)
+                continue
+            }
+            if listID == TodoList.trashID || listID == TodoList.completedID {
+                cleanedItems.append(sanitizedItem)
+                continue
+            }
+            if validListIDs.contains(listID) {
+                cleanedItems.append(sanitizedItem)
+                continue
+            }
+            didFixUp = true
+            if cleanedLists.isEmpty {
+                let inbox = TodoList(id: TodoList.inboxID, name: TodoList.inboxName)
+                cleanedLists.append(inbox)
+                validListIDs.insert(inbox.id)
+            }
+            if let fallbackListID = cleanedLists.first?.id {
+                var copy = sanitizedItem
+                copy.listID = fallbackListID
+                cleanedItems.append(copy)
+            }
+        }
+
+        return (cleanedLists, cleanedItems, didFixUp)
+    }
+
     private static func defaultFileURL(fileManager: FileManager) -> URL {
-        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? fileManager.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support", isDirectory: true)
         let appDir = appSupport.appendingPathComponent("FloatList")
         return appDir.appendingPathComponent("todos.json")
+    }
+
+    private static func normalizedTodoTitleInput(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return String(trimmed.prefix(maxTodoTitleLength))
+    }
+
+    private static func normalizedListNameInput(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return String(trimmed.prefix(maxListNameLength))
+    }
+
+    private static func normalizedListNameInput(_ raw: String, fallback: String) -> String {
+        normalizedListNameInput(raw) ?? fallback
+    }
+
+    private static func clampedPersistedTodoTitle(_ raw: String) -> String {
+        String(raw.prefix(maxTodoTitleLength))
+    }
+
+    private static func clampedPersistedListName(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        return String(raw.prefix(maxListNameLength))
+    }
+
+    // MARK: - Legacy store migration
+
+    static let legacyStoreMigrationDefaultsKey = "floatlist.store.didMigrateLegacyStore"
+    private static let legacyStoreMigrationMaxBytes: Int = 50 * 1024 * 1024
+
+    @discardableResult
+    private func migrateLegacyStoreIfNeeded() -> Bool {
+        let defaults = UserDefaults.standard
+        guard let legacyHome = Self.realHomeDirectory() else {
+            defaults.set(true, forKey: Self.legacyStoreMigrationDefaultsKey)
+            return false
+        }
+        let legacyURL = legacyHome.appendingPathComponent("Library/Application Support/FloatList/todos.json")
+        return Self.performLegacyStoreMigration(
+            legacyURL: legacyURL,
+            targetURL: fileURL,
+            fileManager: fileManager,
+            defaults: defaults
+        )
+    }
+
+    @discardableResult
+    static func performLegacyStoreMigration(
+        legacyURL: URL,
+        targetURL: URL,
+        fileManager: FileManager,
+        defaults: UserDefaults
+    ) -> Bool {
+        if defaults.bool(forKey: legacyStoreMigrationDefaultsKey) {
+            return false
+        }
+
+        if fileManager.fileExists(atPath: targetURL.path) {
+            defaults.set(true, forKey: legacyStoreMigrationDefaultsKey)
+            return false
+        }
+
+        let attributes: [FileAttributeKey: Any]
+        do {
+            attributes = try fileManager.attributesOfItem(atPath: legacyURL.path)
+        } catch {
+            if Self.isMissingFileError(error) {
+                defaults.set(true, forKey: legacyStoreMigrationDefaultsKey)
+            } else {
+                NSLog("FloatList legacy-store migration failed to stat legacy file: %@", String(describing: error))
+            }
+            return false
+        }
+
+        if let fileType = attributes[.type] as? FileAttributeType, fileType == .typeSymbolicLink {
+            defaults.set(true, forKey: legacyStoreMigrationDefaultsKey)
+            return false
+        }
+
+        if let size = attributes[.size] as? NSNumber, size.intValue > legacyStoreMigrationMaxBytes {
+            defaults.set(true, forKey: legacyStoreMigrationDefaultsKey)
+            return false
+        }
+
+        do {
+            let directoryURL = targetURL.deletingLastPathComponent()
+            try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
+            try fileManager.copyItem(at: legacyURL, to: targetURL)
+        } catch {
+            NSLog("FloatList legacy-store migration failed: %@", String(describing: error))
+            return false
+        }
+
+        defaults.set(true, forKey: legacyStoreMigrationDefaultsKey)
+        return true
+    }
+
+    // `NSHomeDirectory()` resolves to the sandbox container, so the legacy
+    // pre-sandbox path has to be reconstructed from the real passwd entry.
+    private static func realHomeDirectory() -> URL? {
+        guard let pw = getpwuid(getuid()) else { return nil }
+        guard let cString = pw.pointee.pw_dir else { return nil }
+        let path = String(cString: cString)
+        guard !path.isEmpty else { return nil }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
+    private static func isMissingFileError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == NSCocoaErrorDomain, nsError.code == CocoaError.Code.fileReadNoSuchFile.rawValue {
+            return true
+        }
+        if nsError.domain == NSPOSIXErrorDomain, nsError.code == Int(ENOENT) {
+            return true
+        }
+        return false
     }
 }

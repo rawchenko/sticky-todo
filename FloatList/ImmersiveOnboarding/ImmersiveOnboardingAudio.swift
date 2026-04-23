@@ -8,18 +8,20 @@ import SwiftUI
 final class ImmersiveOnboardingAudio: ObservableObject {
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
-    private let format: AVAudioFormat
+    private let format: AVAudioFormat?
     private var buffer: AVAudioPCMBuffer?
     private var isReady = false
 
     init() {
-        format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2)!
-        buffer = Self.loadBundledAudio(named: "intro", extension: "mp3", format: format)
+        format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2)
+        if let format {
+            buffer = Self.loadBundledAudio(named: "intro", extension: "mp3", format: format)
+        }
         prepareEngine()
     }
 
     private func prepareEngine() {
-        guard OnboardingAudioPreferences.isEnabled else { return }
+        guard OnboardingAudioPreferences.isEnabled, let format else { return }
 
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: format)
