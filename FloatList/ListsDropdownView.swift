@@ -273,7 +273,7 @@ struct ListsDropdownView: View {
                         .accessibilityHidden(true)
                         .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 } else {
-                    listRow(for: item, current: current)
+                    listRow(for: item, current: current, userActionsEnabled: true)
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
@@ -281,7 +281,7 @@ struct ListsDropdownView: View {
             if onboarding.allowsNewListAction {
                 DropdownActionRow(
                     title: "New list",
-                    systemImage: "folder.fill.badge.plus",
+                    systemImage: "plus",
                     action: {
                         isShowingMenu = false
                         DispatchQueue.main.async { onCreate() }
@@ -295,80 +295,23 @@ struct ListsDropdownView: View {
                     .padding(.vertical, 4)
 
                 ForEach(specialLists) { item in
-                    DropdownListRow(
-                        list: item,
-                        isSelected: item.id == current.id,
-                        coordinateSpace: "",
-                        onTap: {
-                            isShowingMenu = false
-                            if item.id != current.id {
-                                onSelect(item.id)
-                            }
-                        }
-                    )
+                    listRow(for: item, current: current, userActionsEnabled: false)
                 }
             }
 
-            let showManagement = !isSpecialList(current) && (onboarding.allowsListManagement || onboarding.allowsListColorPicker || onboarding.allowsDeleteList)
-            let showTrashActions = current.id == trashList.id && onboarding.allowsEmptyTrash
-
-            if showTrashActions || showManagement {
+            if current.id == trashList.id && onboarding.allowsEmptyTrash {
                 Divider()
                     .padding(.vertical, 4)
-            }
 
-            if current.id == trashList.id {
-                if onboarding.allowsEmptyTrash {
-                    DropdownActionRow(
-                        title: "Empty Trash",
-                        systemImage: "trash",
-                        role: .destructive,
-                        action: {
-                            isShowingMenu = false
-                            onEmptyTrash()
-                        }
-                    )
-                }
-            } else if !isSpecialList(current) {
-                if onboarding.allowsListManagement {
-                    DropdownActionRow(
-                        title: "Rename",
-                        systemImage: "pencil",
-                        action: {
-                            isShowingMenu = false
-                            DispatchQueue.main.async { beginEdit(current) }
-                        }
-                    )
-                    DropdownActionRow(
-                        title: "Change icon",
-                        systemImage: "square.grid.2x2",
-                        action: {
-                            isShowingMenu = false
-                            DispatchQueue.main.async { isShowingIconPicker = true }
-                        }
-                    )
-                }
-                if onboarding.allowsListColorPicker {
-                    DropdownActionRow(
-                        title: "Change color",
-                        systemImage: "paintpalette",
-                        action: {
-                            isShowingMenu = false
-                            DispatchQueue.main.async { isShowingColorPicker = true }
-                        }
-                    )
-                }
-                if onboarding.allowsDeleteList {
-                    DropdownActionRow(
-                        title: "Delete list",
-                        systemImage: "trash",
-                        role: .destructive,
-                        action: {
-                            isShowingMenu = false
-                            onDelete(current)
-                        }
-                    )
-                }
+                DropdownActionRow(
+                    title: "Empty Trash",
+                    systemImage: "trash",
+                    role: .destructive,
+                    action: {
+                        isShowingMenu = false
+                        onEmptyTrash()
+                    }
+                )
             }
         }
         .coordinateSpace(name: Self.reorderCoordinateSpace)
@@ -411,11 +354,11 @@ struct ListsDropdownView: View {
     }
 
     @ViewBuilder
-    private func listRow(for item: TodoList, current: TodoList) -> some View {
+    private func listRow(for item: TodoList, current: TodoList, userActionsEnabled: Bool) -> some View {
         DropdownListRow(
             list: item,
             isSelected: item.id == current.id,
-            coordinateSpace: Self.reorderCoordinateSpace,
+            coordinateSpace: userActionsEnabled ? Self.reorderCoordinateSpace : "",
             onTap: {
                 guard dragSession == nil else { return }
                 guard onboarding.allowsListSelection else { return }
@@ -423,8 +366,58 @@ struct ListsDropdownView: View {
                 if item.id != current.id {
                     onSelect(item.id)
                 }
-            }
+            },
+            actions: userActionsEnabled ? listRowActions(for: item, current: current) : nil
         )
+    }
+
+    private func listRowActions(for item: TodoList, current: TodoList) -> DropdownListRowActions? {
+        let canRename = onboarding.allowsListManagement
+        let canChangeIcon = onboarding.allowsListManagement
+        let canChangeColor = onboarding.allowsListColorPicker
+        let canDelete = onboarding.allowsDeleteList
+
+        guard canRename || canChangeIcon || canChangeColor || canDelete else { return nil }
+
+        return DropdownListRowActions(
+            canRename: canRename,
+            canChangeIcon: canChangeIcon,
+            canChangeColor: canChangeColor,
+            canDelete: canDelete,
+            onRename: { triggerRename(item, current: current) },
+            onChangeIcon: { triggerIconChange(item, current: current) },
+            onChangeColor: { triggerColorChange(item, current: current) },
+            onDelete: { triggerDelete(item) }
+        )
+    }
+
+    private func triggerRename(_ list: TodoList, current: TodoList) {
+        isShowingMenu = false
+        if list.id != current.id {
+            onSelect(list.id)
+        }
+        DispatchQueue.main.async { beginEdit(list) }
+    }
+
+    private func triggerIconChange(_ list: TodoList, current: TodoList) {
+        isShowingMenu = false
+        if list.id != current.id {
+            onSelect(list.id)
+        }
+        DispatchQueue.main.async { isShowingIconPicker = true }
+    }
+
+    private func triggerColorChange(_ list: TodoList, current: TodoList) {
+        isShowingMenu = false
+        if list.id != current.id {
+            onSelect(list.id)
+        }
+        DispatchQueue.main.async { isShowingColorPicker = true }
+    }
+
+    private func triggerDelete(_ list: TodoList) {
+        isShowingMenu = false
+        onDelete(list)
     }
 
     private func listDragLandingIndicator() -> some View {
@@ -638,19 +631,50 @@ private struct ListDragSession {
 
 // MARK: - Rows
 
+struct DropdownListRowActions {
+    var canRename: Bool
+    var canChangeIcon: Bool
+    var canChangeColor: Bool
+    var canDelete: Bool
+    var onRename: () -> Void
+    var onChangeIcon: () -> Void
+    var onChangeColor: () -> Void
+    var onDelete: () -> Void
+}
+
 private struct DropdownListRow: View {
     let list: TodoList
     let isSelected: Bool
     var coordinateSpace: String = ""
     var onTap: () -> Void
+    var actions: DropdownListRowActions? = nil
 
     @State private var isHovering = false
     @State private var isPressed = false
+    @State private var isShowingActions = false
     @ObservedObject private var tweaks = LayoutTweaks.shared
 
     var body: some View {
         rowContent
             .background(framePreference)
+            .overlay(rightClickOverlay)
+            .popover(isPresented: $isShowingActions, arrowEdge: .leading) {
+                if let actions {
+                    ListRowActionsMenu(actions: actions) {
+                        isShowingActions = false
+                    }
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var rightClickOverlay: some View {
+        if actions != nil {
+            RightClickCatcher {
+                isShowingActions = true
+            }
+            .allowsHitTesting(true)
+        }
     }
 
     @ViewBuilder
@@ -670,11 +694,7 @@ private struct DropdownListRow: View {
 
             Spacer(minLength: 8)
 
-            if isSelected {
-                Image(systemName: "checkmark")
-                    .font(.system(size: max(tweaks.secondaryTextSize - 1, 9), weight: .semibold))
-                    .foregroundStyle(FloatListTheme.textSecondary)
-            }
+            trailingAccessory
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
@@ -699,6 +719,33 @@ private struct DropdownListRow: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(list.name)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    @ViewBuilder
+    private var trailingAccessory: some View {
+        if actions != nil && isHovering {
+            ellipsisMenu
+        } else if isSelected {
+            Image(systemName: "checkmark")
+                .font(.system(size: max(tweaks.secondaryTextSize - 1, 9), weight: .semibold))
+                .foregroundStyle(FloatListTheme.textSecondary)
+        }
+    }
+
+    @ViewBuilder
+    private var ellipsisMenu: some View {
+        Button {
+            isShowingActions = true
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: max(tweaks.secondaryTextSize - 1, 10), weight: .semibold))
+                .foregroundStyle(FloatListTheme.textSecondary)
+                .frame(width: 20, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .pointerCursor(.pointingHand)
+        .accessibilityLabel("More actions")
     }
 
     @ViewBuilder
@@ -776,5 +823,94 @@ private struct DropdownActionRow: View {
 
     private var foreground: Color {
         role == .destructive ? FloatListTheme.destructive : FloatListTheme.textPrimary
+    }
+}
+
+private struct ListRowActionsMenu: View {
+    let actions: DropdownListRowActions
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if actions.canRename {
+                DropdownActionRow(
+                    title: "Rename",
+                    systemImage: "pencil",
+                    action: {
+                        onDismiss()
+                        DispatchQueue.main.async { actions.onRename() }
+                    }
+                )
+            }
+            if actions.canChangeIcon {
+                DropdownActionRow(
+                    title: "Change icon",
+                    systemImage: "app.dashed",
+                    action: {
+                        onDismiss()
+                        DispatchQueue.main.async { actions.onChangeIcon() }
+                    }
+                )
+            }
+            if actions.canChangeColor {
+                DropdownActionRow(
+                    title: "Change color",
+                    systemImage: "paintbrush",
+                    action: {
+                        onDismiss()
+                        DispatchQueue.main.async { actions.onChangeColor() }
+                    }
+                )
+            }
+            if actions.canDelete {
+                if actions.canRename || actions.canChangeIcon || actions.canChangeColor {
+                    Divider()
+                        .padding(.vertical, 4)
+                }
+                DropdownActionRow(
+                    title: "Delete list",
+                    systemImage: "trash",
+                    role: .destructive,
+                    action: {
+                        onDismiss()
+                        DispatchQueue.main.async { actions.onDelete() }
+                    }
+                )
+            }
+        }
+        .padding(6)
+        .frame(minWidth: 180)
+    }
+}
+
+private struct RightClickCatcher: NSViewRepresentable {
+    var onRightClick: () -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = CatcherView()
+        view.onRightClick = onRightClick
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        (nsView as? CatcherView)?.onRightClick = onRightClick
+    }
+
+    final class CatcherView: NSView {
+        var onRightClick: (() -> Void)?
+
+        override func rightMouseDown(with event: NSEvent) {
+            onRightClick?()
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            guard let event = NSApp.currentEvent else { return nil }
+            switch event.type {
+            case .rightMouseDown, .rightMouseUp:
+                return super.hitTest(point)
+            default:
+                return nil
+            }
+        }
     }
 }
