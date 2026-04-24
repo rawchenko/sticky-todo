@@ -1,9 +1,10 @@
 import XCTest
+import AppKit
 @testable import FloatList
 
 @MainActor
 final class TodoStoreTests: XCTestCase {
-    func testLoadLegacyJSONMigratesToDefaultTasksListAndRewritesFile() throws {
+    func testLegacyJSONArrayIsRecoveredAsUnreadableStoreAndBackedUp() throws {
         let fileURL = try makeStoreFileURL()
         let expectedItem = TodoItem(
             id: UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!,
@@ -16,20 +17,14 @@ final class TodoStoreTests: XCTestCase {
         try data.write(to: fileURL, options: .atomic)
 
         let store = TodoStore(fileURL: fileURL)
+        let notice = try XCTUnwrap(store.recoveryNotice)
+        let backupURL = try XCTUnwrap(notice.backupURL)
 
-        XCTAssertEqual(store.items.count, 1)
-        XCTAssertEqual(store.items.first?.id, expectedItem.id)
-        XCTAssertEqual(store.items.first?.title, expectedItem.title)
-        XCTAssertEqual(store.lists.count, 1)
-        XCTAssertEqual(store.lists.first?.name, "Tasks")
-        XCTAssertEqual(store.items.first?.listID, store.lists.first?.id)
-        XCTAssertEqual(store.selectedListID, store.lists.first?.id)
-        XCTAssertNil(store.recoveryNotice)
-
-        let reloaded = try JSONDecoder().decode(TodoStoreFile.self, from: Data(contentsOf: fileURL))
-        XCTAssertEqual(reloaded.schemaVersion, TodoStore.currentSchemaVersion)
-        XCTAssertEqual(reloaded.lists.map(\.name), ["Tasks"])
-        XCTAssertEqual(reloaded.todos.map(\.title), ["Ship recovery fix"])
+        XCTAssertTrue(store.items.isEmpty)
+        XCTAssertEqual(store.lists.map(\.id), [TodoList.inboxID])
+        XCTAssertEqual(store.selectedListID, TodoList.inboxID)
+        XCTAssertTrue(notice.message.contains("backup was saved"))
+        XCTAssertEqual(try Data(contentsOf: backupURL), data)
     }
 
     func testLoadSchemaV2FileRestoresListsAndSelection() throws {
@@ -808,98 +803,6 @@ final class TodoStoreTests: XCTestCase {
         XCTAssertTrue(store.items.allSatisfy { $0.listID == listID })
     }
 
-    func testPerformLegacyStoreMigrationCopiesFileAndSetsFlag() throws {
-        let tempRoot = FileManager.default.temporaryDirectory
-            .appendingPathComponent("FloatListMigrationTests-\(UUID().uuidString)", isDirectory: true)
-        let legacyDir = tempRoot.appendingPathComponent("legacy", isDirectory: true)
-        let targetDir = tempRoot.appendingPathComponent("target", isDirectory: true)
-        try FileManager.default.createDirectory(at: legacyDir, withIntermediateDirectories: true, attributes: nil)
-        addTeardownBlock {
-            try? FileManager.default.removeItem(at: tempRoot)
-        }
-
-        let legacyURL = legacyDir.appendingPathComponent("todos.json")
-        let targetURL = targetDir.appendingPathComponent("todos.json")
-
-        let list = TodoList(name: "Work")
-        let todo = TodoItem(title: "Legacy task", listID: list.id)
-        let seed = TodoStoreFile(
-            schemaVersion: TodoStore.currentSchemaVersion,
-            lists: [list],
-            todos: [todo],
-            selectedListID: list.id
-        )
-        let seedData = try JSONEncoder().encode(seed)
-        try seedData.write(to: legacyURL, options: .atomic)
-
-        let suiteName = "FloatListMigrationTests-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        addTeardownBlock {
-            defaults.removePersistentDomain(forName: suiteName)
-        }
-
-        let didMigrate = TodoStore.performLegacyStoreMigration(
-            legacyURL: legacyURL,
-            targetURL: targetURL,
-            fileManager: .default,
-            defaults: defaults
-        )
-
-        XCTAssertTrue(didMigrate)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: targetURL.path))
-        XCTAssertEqual(try Data(contentsOf: targetURL), seedData)
-        XCTAssertTrue(defaults.bool(forKey: TodoStore.legacyStoreMigrationDefaultsKey))
-    }
-
-    func testPerformLegacyStoreMigrationSetsFlagWhenLegacyFileIsAbsent() throws {
-        let tempRoot = FileManager.default.temporaryDirectory
-            .appendingPathComponent("FloatListMigrationTests-\(UUID().uuidString)", isDirectory: true)
-        addTeardownBlock {
-            try? FileManager.default.removeItem(at: tempRoot)
-        }
-
-        let legacyURL = tempRoot.appendingPathComponent("missing/todos.json")
-        let targetURL = tempRoot.appendingPathComponent("target/todos.json")
-        let suiteName = "FloatListMigrationTests-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        addTeardownBlock {
-            defaults.removePersistentDomain(forName: suiteName)
-        }
-
-        let didMigrate = TodoStore.performLegacyStoreMigration(
-            legacyURL: legacyURL,
-            targetURL: targetURL,
-            fileManager: .default,
-            defaults: defaults
-        )
-
-        XCTAssertFalse(didMigrate)
-        XCTAssertTrue(defaults.bool(forKey: TodoStore.legacyStoreMigrationDefaultsKey))
-    }
-
-    func testPerformLegacyStoreMigrationLeavesFlagUnsetWhenLegacyStatFails() throws {
-        let legacyURL = URL(fileURLWithPath: "/legacy/FloatList/todos.json")
-        let targetURL = URL(fileURLWithPath: "/target/FloatList/todos.json")
-        let suiteName = "FloatListMigrationTests-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        addTeardownBlock {
-            defaults.removePersistentDomain(forName: suiteName)
-        }
-
-        let didMigrate = TodoStore.performLegacyStoreMigration(
-            legacyURL: legacyURL,
-            targetURL: targetURL,
-            fileManager: StatFailingFileManager(
-                legacyPath: legacyURL.path,
-                targetPath: targetURL.path
-            ),
-            defaults: defaults
-        )
-
-        XCTAssertFalse(didMigrate)
-        XCTAssertFalse(defaults.bool(forKey: TodoStore.legacyStoreMigrationDefaultsKey))
-    }
-
     // MARK: - Undo
 
     func testUndoStartsDisabledAndBecomesEnabledAfterMutation() throws {
@@ -1044,6 +947,19 @@ final class TodoStoreTests: XCTestCase {
         XCTAssertTrue(reopened.items.isEmpty)
     }
 
+    func testPendingSaveIsFlushedWhenAppResignsActive() throws {
+        let fileURL = try makeStoreFileURL()
+        let store = TodoStore(fileURL: fileURL)
+
+        store.add(title: "Ship before rebuild")
+
+        NotificationCenter.default.post(name: NSApplication.willResignActiveNotification, object: nil)
+
+        let reopened = TodoStore(fileURL: fileURL)
+        XCTAssertEqual(reopened.items.map(\.title), ["Ship before rebuild"])
+        XCTAssertEqual(reopened.items.first?.listID, TodoList.inboxID)
+    }
+
     func testSelectListDoesNotPolluteUndoStack() throws {
         let store = TodoStore(fileURL: try makeStoreFileURL())
         let a = store.addList(name: "A")
@@ -1107,30 +1023,5 @@ final class TodoStoreTests: XCTestCase {
             try? FileManager.default.removeItem(at: directoryURL)
         }
         return directoryURL.appendingPathComponent("todos.json")
-    }
-}
-
-private final class StatFailingFileManager: FileManager {
-    private let legacyPath: String
-    private let targetPath: String
-
-    init(legacyPath: String, targetPath: String) {
-        self.legacyPath = legacyPath
-        self.targetPath = targetPath
-        super.init()
-    }
-
-    override func fileExists(atPath path: String) -> Bool {
-        if path == targetPath {
-            return false
-        }
-        return path == legacyPath
-    }
-
-    override func attributesOfItem(atPath path: String) throws -> [FileAttributeKey: Any] {
-        throw NSError(
-            domain: NSCocoaErrorDomain,
-            code: CocoaError.Code.fileReadNoPermission.rawValue
-        )
     }
 }
