@@ -1,7 +1,6 @@
 import Foundation
 import Combine
 import AppKit
-import Darwin
 
 struct TodoStoreRecoveryNotice: Identifiable, Equatable {
     let id = UUID()
@@ -53,7 +52,7 @@ final class TodoStore: ObservableObject {
     private var isBatching = false
     private let persistenceQueue = DispatchQueue(label: "FloatList.TodoStore.persistence", qos: .utility)
     private var pendingSave: PendingSave?
-    private var terminationObserver: NSObjectProtocol?
+    private var lifecycleObservers: [NSObjectProtocol] = []
 
     private static let saveDebounceInterval: TimeInterval = 0.35
 
@@ -80,40 +79,35 @@ final class TodoStore: ObservableObject {
 
     init(fileURL: URL? = nil, fileManager: FileManager = .default, inMemory: Bool = false) {
         self.fileManager = fileManager
-        let usesDefaultFileURL = fileURL == nil
         self.fileURL = fileURL ?? Self.defaultFileURL(fileManager: fileManager)
         self.inMemory = inMemory
-        var didMigrateLegacyStore = false
         if !inMemory {
             let directoryURL = self.fileURL.deletingLastPathComponent()
             try? fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
-            if usesDefaultFileURL {
-                didMigrateLegacyStore = migrateLegacyStoreIfNeeded()
-            }
         }
         if !inMemory {
-            terminationObserver = NotificationCenter.default.addObserver(
-                forName: NSApplication.willTerminateNotification,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    self?.save()
+            lifecycleObservers = [
+                NSApplication.willResignActiveNotification,
+                NSApplication.willHideNotification,
+                NSApplication.willTerminateNotification,
+            ].map { notificationName in
+                NotificationCenter.default.addObserver(
+                    forName: notificationName,
+                    object: nil,
+                    queue: .main
+                ) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        self?.save()
+                    }
                 }
             }
         }
         load()
-        if didMigrateLegacyStore, recoveryNotice == nil {
-            recoveryNotice = TodoStoreRecoveryNotice(
-                message: "Migrated existing data from previous install.",
-                backupURL: nil
-            )
-        }
     }
 
     deinit {
-        if let terminationObserver {
-            NotificationCenter.default.removeObserver(terminationObserver)
+        for observer in lifecycleObservers {
+            NotificationCenter.default.removeObserver(observer)
         }
     }
 
@@ -181,29 +175,23 @@ final class TodoStore: ObservableObject {
 
         do {
             let data = try loadStoreData()
-
-            if let file = try? JSONDecoder().decode(TodoStoreFile.self, from: data) {
-                if file.schemaVersion > Self.currentSchemaVersion {
-                    presentUnsupportedSchemaVersion(file.schemaVersion)
-                    return
-                }
-                // Add explicit per-version migrations here when a future schema bump breaks backward compatibility.
-                let sanitized = Self.sanitizeDecoded(lists: file.lists, items: file.todos)
-                lists = sanitized.lists
-                items = sanitized.items
-                selectedListID = normalizedSelection(file.selectedListID)
-                isStorageWritable = true
-                recoveryNotice = sanitized.didFixUp
-                    ? TodoStoreRecoveryNotice(
-                        message: "Your todo file contained invalid entries that were cleaned up.",
-                        backupURL: nil
-                    )
-                    : nil
+            let file = try JSONDecoder().decode(TodoStoreFile.self, from: data)
+            if file.schemaVersion > Self.currentSchemaVersion {
+                presentUnsupportedSchemaVersion(file.schemaVersion)
                 return
             }
-
-            let legacyItems = try JSONDecoder().decode([TodoItem].self, from: data)
-            migrateFromLegacy(legacyItems)
+            // Add explicit per-version migrations here when a future schema bump breaks backward compatibility.
+            let sanitized = Self.sanitizeDecoded(lists: file.lists, items: file.todos)
+            lists = sanitized.lists
+            items = sanitized.items
+            selectedListID = normalizedSelection(file.selectedListID)
+            isStorageWritable = true
+            recoveryNotice = sanitized.didFixUp
+                ? TodoStoreRecoveryNotice(
+                    message: "Your todo file contained invalid entries that were cleaned up.",
+                    backupURL: nil
+                )
+                : nil
         } catch let issue as StoreLoadIssue {
             presentBlockedStore(issue)
         } catch {
@@ -757,24 +745,6 @@ final class TodoStore: ObservableObject {
 
     // MARK: - Migration / recovery
 
-    private func migrateFromLegacy(_ legacyItems: [TodoItem]) {
-        let defaultList = TodoList(name: "Tasks")
-        lists = [defaultList]
-        items = legacyItems.map { item in
-            var copy = item
-            copy.title = Self.clampedPersistedTodoTitle(copy.title)
-            copy.listID = defaultList.id
-            copy.trashedAt = nil
-            copy.trashedOriginalListID = nil
-            copy.trashedOriginalListName = nil
-            return copy
-        }
-        selectedListID = defaultList.id
-        isStorageWritable = true
-        recoveryNotice = nil
-        save()
-    }
-
     private func recoverUnreadableStore(after decodeError: Error) {
         let backupURL = makeBackupURL()
 
@@ -1070,98 +1040,5 @@ final class TodoStore: ObservableObject {
     private static func clampedPersistedListName(_ raw: String?) -> String? {
         guard let raw else { return nil }
         return String(raw.prefix(maxListNameLength))
-    }
-
-    // MARK: - Legacy store migration
-
-    static let legacyStoreMigrationDefaultsKey = "floatlist.store.didMigrateLegacyStore"
-    private static let legacyStoreMigrationMaxBytes: Int = 50 * 1024 * 1024
-
-    @discardableResult
-    private func migrateLegacyStoreIfNeeded() -> Bool {
-        let defaults = UserDefaults.standard
-        guard let legacyHome = Self.realHomeDirectory() else {
-            defaults.set(true, forKey: Self.legacyStoreMigrationDefaultsKey)
-            return false
-        }
-        let legacyURL = legacyHome.appendingPathComponent("Library/Application Support/FloatList/todos.json")
-        return Self.performLegacyStoreMigration(
-            legacyURL: legacyURL,
-            targetURL: fileURL,
-            fileManager: fileManager,
-            defaults: defaults
-        )
-    }
-
-    @discardableResult
-    static func performLegacyStoreMigration(
-        legacyURL: URL,
-        targetURL: URL,
-        fileManager: FileManager,
-        defaults: UserDefaults
-    ) -> Bool {
-        if defaults.bool(forKey: legacyStoreMigrationDefaultsKey) {
-            return false
-        }
-
-        if fileManager.fileExists(atPath: targetURL.path) {
-            defaults.set(true, forKey: legacyStoreMigrationDefaultsKey)
-            return false
-        }
-
-        let attributes: [FileAttributeKey: Any]
-        do {
-            attributes = try fileManager.attributesOfItem(atPath: legacyURL.path)
-        } catch {
-            if Self.isMissingFileError(error) {
-                defaults.set(true, forKey: legacyStoreMigrationDefaultsKey)
-            } else {
-                NSLog("FloatList legacy-store migration failed to stat legacy file: %@", String(describing: error))
-            }
-            return false
-        }
-
-        if let fileType = attributes[.type] as? FileAttributeType, fileType == .typeSymbolicLink {
-            defaults.set(true, forKey: legacyStoreMigrationDefaultsKey)
-            return false
-        }
-
-        if let size = attributes[.size] as? NSNumber, size.intValue > legacyStoreMigrationMaxBytes {
-            defaults.set(true, forKey: legacyStoreMigrationDefaultsKey)
-            return false
-        }
-
-        do {
-            let directoryURL = targetURL.deletingLastPathComponent()
-            try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
-            try fileManager.copyItem(at: legacyURL, to: targetURL)
-        } catch {
-            NSLog("FloatList legacy-store migration failed: %@", String(describing: error))
-            return false
-        }
-
-        defaults.set(true, forKey: legacyStoreMigrationDefaultsKey)
-        return true
-    }
-
-    // `NSHomeDirectory()` resolves to the sandbox container, so the legacy
-    // pre-sandbox path has to be reconstructed from the real passwd entry.
-    private static func realHomeDirectory() -> URL? {
-        guard let pw = getpwuid(getuid()) else { return nil }
-        guard let cString = pw.pointee.pw_dir else { return nil }
-        let path = String(cString: cString)
-        guard !path.isEmpty else { return nil }
-        return URL(fileURLWithPath: path, isDirectory: true)
-    }
-
-    private static func isMissingFileError(_ error: Error) -> Bool {
-        let nsError = error as NSError
-        if nsError.domain == NSCocoaErrorDomain, nsError.code == CocoaError.Code.fileReadNoSuchFile.rawValue {
-            return true
-        }
-        if nsError.domain == NSPOSIXErrorDomain, nsError.code == Int(ENOENT) {
-            return true
-        }
-        return false
     }
 }
