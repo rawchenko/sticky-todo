@@ -864,10 +864,10 @@ struct ContentView: View {
                     }
                 }
             }
+            }
 
             if let dragSession {
                 dragOverlay(for: dragSession)
-            }
             }
         }
         .background(
