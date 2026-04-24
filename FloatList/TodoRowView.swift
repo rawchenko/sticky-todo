@@ -42,6 +42,7 @@ struct TwoFingerSwipeDetector: NSViewRepresentable {
         var callbacks: Callbacks?
 
         private var monitor: Any?
+        private var trackingArea: NSTrackingArea?
 
         private var accumulated: CGFloat = 0
         private var axis: Axis?
@@ -55,15 +56,47 @@ struct TwoFingerSwipeDetector: NSViewRepresentable {
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            if window != nil {
-                installMonitorIfNeeded()
+            if window == nil {
+                removeMonitor()
             } else {
+                updateTrackingAreas()
+            }
+        }
+
+        override func updateTrackingAreas() {
+            if let trackingArea {
+                removeTrackingArea(trackingArea)
+            }
+
+            let trackingArea = NSTrackingArea(
+                rect: .zero,
+                options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited],
+                owner: self,
+                userInfo: nil
+            )
+            addTrackingArea(trackingArea)
+            self.trackingArea = trackingArea
+
+            super.updateTrackingAreas()
+        }
+
+        override func mouseEntered(with event: NSEvent) {
+            super.mouseEntered(with: event)
+            installMonitorIfNeeded()
+        }
+
+        override func mouseExited(with event: NSEvent) {
+            super.mouseExited(with: event)
+            if !tracking {
                 removeMonitor()
             }
         }
 
         deinit {
             removeMonitor()
+            if let trackingArea {
+                removeTrackingArea(trackingArea)
+            }
         }
 
         private func installMonitorIfNeeded() {
@@ -1069,4 +1102,3 @@ struct CompletionRipple: View {
             }
     }
 }
-

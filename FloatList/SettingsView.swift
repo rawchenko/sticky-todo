@@ -573,7 +573,7 @@ private struct AboutSettingsView: View {
 
             Spacer(minLength: 0)
 
-            Text("© 2026 rawchenko")
+            Text("© 2026 rawstudio")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
                 .padding(.bottom, 4)
