@@ -101,6 +101,28 @@ private final class TaskListScrollController: ObservableObject {
         scrollView.reflectScrolledClipView(clipView)
         return nextY - previousY
     }
+
+    func scrollToBottom(animated: Bool = true, duration: CFTimeInterval = 0.42) {
+        guard let scrollView, let documentView = scrollView.documentView else { return }
+        documentView.layoutSubtreeIfNeeded()
+        let clipView = scrollView.contentView
+        let maxY = max(0, documentView.bounds.height - clipView.bounds.height)
+        let targetOrigin = NSPoint(x: clipView.bounds.origin.x, y: maxY)
+        guard abs(targetOrigin.y - clipView.bounds.origin.y) > 0.5 else { return }
+
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = duration
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                clipView.animator().setBoundsOrigin(targetOrigin)
+            } completionHandler: { [weak scrollView] in
+                scrollView?.reflectScrolledClipView(clipView)
+            }
+        } else {
+            clipView.setBoundsOrigin(targetOrigin)
+            scrollView.reflectScrolledClipView(clipView)
+        }
+    }
 }
 
 private struct TaskListScrollAccessor: NSViewRepresentable {
@@ -720,15 +742,28 @@ struct ContentView: View {
     }
 
     private var emptyState: some View {
-        let restCopy = isInboxFirstRun ? "Start with one thing" : "Start typing\nto create a new item"
-        return VStack(spacing: 0) {
-            Text(hasInputDraft ? "Press ⏎ to add" : restCopy)
-                .font(.system(size: tweaks.bodyTextSize).italic())
-                .foregroundStyle(FloatListTheme.textSecondary)
-                .multilineTextAlignment(.center)
+        VStack(spacing: 8) {
+            if hasInputDraft {
+                Text("Press ⏎ to add")
+                    .font(.system(size: tweaks.bodyTextSize).italic())
+                    .foregroundStyle(FloatListTheme.textSecondary)
+                    .multilineTextAlignment(.center)
+            } else {
+                Image(systemName: "tray")
+                    .font(.system(size: tweaks.bodyTextSize * 1.6, weight: .light))
+                    .foregroundStyle(FloatListTheme.textSecondary)
+                    .padding(.bottom, 2)
+                Text("Nothing active")
+                    .font(.system(size: tweaks.bodyTextSize, weight: .medium))
+                    .foregroundStyle(FloatListTheme.textPrimary.opacity(0.85))
+                Text("Type below to add your next item")
+                    .font(.system(size: tweaks.secondaryTextSize))
+                    .foregroundStyle(FloatListTheme.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
         }
-        .opacity(hasInputDraft ? 0.42 : 0.7)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .opacity(hasInputDraft ? 0.42 : 0.85)
         .animation(.easeInOut(duration: 0.2), value: hasInputDraft)
     }
 
@@ -775,45 +810,39 @@ struct ContentView: View {
         }
     }
 
+    private static let completedToggleAnchorID = "completed-toggle-anchor"
+
     private var taskList: some View {
+        GeometryReader { availableGeo in
         ZStack(alignment: .topLeading) {
+            ScrollViewReader { scrollProxy in
             ScrollView {
-                LazyVStack(spacing: tweaks.rowSpacing) {
-                    if let listID = selectedRegularListID {
-                        regularListSection
-
-                        if !currentCompletedItems.isEmpty {
-                            completedToggleButton(for: listID, count: currentCompletedItems.count)
-
-                            if isCompletedExpanded(for: listID) {
-                                let completed = currentCompletedItems
-                                ForEach(Array(completed.enumerated()), id: \.element.id) { idx, item in
+                Group {
+                    if let listID = selectedRegularListID,
+                       !currentCompletedItems.isEmpty {
+                        regularWithCompletedLayout(listID: listID, availableHeight: availableGeo.size.height)
+                    } else {
+                        LazyVStack(spacing: tweaks.rowSpacing) {
+                            if selectedRegularListID != nil {
+                                regularListSection
+                            } else {
+                                let items = sortedItems
+                                ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
                                     taskRow(
                                         item,
+                                        subtitle: store.isSpecialListSelected ? store.sourceListName(for: item) : nil,
                                         isReorderEnabled: false,
-                                        prevItemID: idx > 0 ? completed[idx - 1].id : nil,
-                                        nextItemID: idx < completed.count - 1 ? completed[idx + 1].id : nil
+                                        prevItemID: idx > 0 ? items[idx - 1].id : nil,
+                                        nextItemID: idx < items.count - 1 ? items[idx + 1].id : nil
                                     )
                                     .transition(.opacity.combined(with: .move(edge: .top)))
                                 }
                             }
                         }
-                    } else {
-                        let items = sortedItems
-                        ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
-                            taskRow(
-                                item,
-                                subtitle: store.isSpecialListSelected ? store.sourceListName(for: item) : nil,
-                                isReorderEnabled: false,
-                                prevItemID: idx > 0 ? items[idx - 1].id : nil,
-                                nextItemID: idx < items.count - 1 ? items[idx + 1].id : nil
-                            )
-                            .transition(.opacity.combined(with: .move(edge: .top)))
-                        }
+                        .padding(.horizontal, tweaks.contentHorizontalPadding)
+                        .padding(.vertical, 4)
                     }
                 }
-                .padding(.horizontal, tweaks.contentHorizontalPadding)
-                .padding(.vertical, 4)
             }
             .background(TaskListScrollAccessor { scrollView in
                 taskListScrollController.attach(scrollView)
@@ -827,9 +856,18 @@ struct ContentView: View {
                         )
                 }
             )
+            .onChange(of: expandedCompletedListIDs) { _, newValue in
+                guard let listID = selectedRegularListID, newValue.contains(listID) else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                    withAnimation(.easeInOut(duration: 0.38)) {
+                        scrollProxy.scrollTo(Self.completedToggleAnchorID, anchor: .top)
+                    }
+                }
+            }
 
             if let dragSession {
                 dragOverlay(for: dragSession)
+            }
             }
         }
         .background(
@@ -868,15 +906,12 @@ struct ContentView: View {
         }
         .frame(maxHeight: .infinity)
         .animation(Self.reorderStepAnimation, value: dragSession?.targetIndex)
+        }
     }
 
     @ViewBuilder
     private var regularListSection: some View {
         let items = projectedRegularItems
-
-        if items.isEmpty && !currentCompletedItems.isEmpty {
-            inlineEmptyState
-        }
 
         ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
             if draggingID == item.id {
@@ -1357,17 +1392,69 @@ struct ContentView: View {
     }
 
     private var inlineEmptyState: some View {
-        VStack(spacing: 0) {
-            Text(hasInputDraft ? "Press ⏎ to add" : "Start typing\nto create a new item")
-                .font(.system(size: tweaks.bodyTextSize).italic())
-                .foregroundStyle(FloatListTheme.textSecondary)
-                .multilineTextAlignment(.center)
+        VStack(spacing: 8) {
+            if hasInputDraft {
+                Text("Press ⏎ to add")
+                    .font(.system(size: tweaks.bodyTextSize).italic())
+                    .foregroundStyle(FloatListTheme.textSecondary)
+                    .multilineTextAlignment(.center)
+            } else {
+                Image(systemName: "tray")
+                    .font(.system(size: tweaks.bodyTextSize * 1.6, weight: .light))
+                    .foregroundStyle(FloatListTheme.textSecondary)
+                    .padding(.bottom, 2)
+                Text("Nothing active")
+                    .font(.system(size: tweaks.bodyTextSize, weight: .medium))
+                    .foregroundStyle(FloatListTheme.textPrimary.opacity(0.85))
+                Text("Type below to add your next item")
+                    .font(.system(size: tweaks.secondaryTextSize))
+                    .foregroundStyle(FloatListTheme.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 18)
         .frame(maxWidth: .infinity)
-        .opacity(hasInputDraft ? 0.42 : 0.7)
+        .opacity(hasInputDraft ? 0.42 : 0.85)
         .animation(.easeInOut(duration: 0.2), value: hasInputDraft)
+    }
+
+    @ViewBuilder
+    private func regularWithCompletedLayout(listID: UUID, availableHeight: CGFloat) -> some View {
+        let expanded = isCompletedExpanded(for: listID)
+        let itemsEmpty = projectedRegularItems.isEmpty
+        VStack(spacing: 0) {
+            VStack(spacing: 0) {
+                if itemsEmpty {
+                    Spacer(minLength: 0)
+                    inlineEmptyState
+                    Spacer(minLength: 0)
+                } else {
+                    LazyVStack(spacing: tweaks.rowSpacing) {
+                        regularListSection
+                    }
+                    Spacer(minLength: 0)
+                }
+                completedToggleButton(for: listID, count: currentCompletedItems.count)
+            }
+            .frame(minHeight: max(0, availableHeight - 8))
+
+            if expanded {
+                let completed = currentCompletedItems
+                LazyVStack(spacing: tweaks.rowSpacing) {
+                    ForEach(Array(completed.enumerated()), id: \.element.id) { idx, item in
+                        taskRow(
+                            item,
+                            isReorderEnabled: false,
+                            prevItemID: idx > 0 ? completed[idx - 1].id : nil,
+                            nextItemID: idx < completed.count - 1 ? completed[idx + 1].id : nil
+                        )
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, tweaks.contentHorizontalPadding)
+        .padding(.vertical, 4)
     }
 
     private func completedToggleButton(for listID: UUID, count: Int) -> some View {
@@ -1412,11 +1499,11 @@ struct ContentView: View {
         }
         .padding(.top, 2)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .id(Self.completedToggleAnchorID)
     }
 
     private func completedButtonTitle(count: Int, expanded: Bool) -> String {
-        let noun = count == 1 ? "completed item" : "completed items"
-        return expanded ? "Hide \(count) \(noun)" : "Show \(count) \(noun)"
+        return "\(count) completed"
     }
 
     private func isCompletedExpanded(for listID: UUID) -> Bool {
@@ -1430,6 +1517,7 @@ struct ContentView: View {
             expandedCompletedListIDs.insert(listID)
         }
     }
+
 
     private struct RowRenderIdentity: Hashable {
         let itemID: UUID
