@@ -163,7 +163,7 @@ struct ImmersiveOnboardingRootView: View {
             // Colored metaballs — three warm hues stacked. Always orbiting
             // at full radius; the intro bloom is driven by the outer
             // scaleEffect so the alpha-threshold merge stays smooth.
-            metaballs
+            metaballs(radiusScale: expanded ? 1.42 : 1.0)
                 .frame(width: 640, height: 540)
                 .mask(
                     RadialGradient(
@@ -174,7 +174,15 @@ struct ImmersiveOnboardingRootView: View {
                     )
                 )
                 .blur(radius: 28)
-                .scaleEffect((expanded ? 1.3 : 1.0) * (0.35 + 0.65 * state.orbitProgress))
+                // Bloom scale only tracks intro progress. Do not tie this
+                // to panel expand/collapse: scaling the whole metaball
+                // field while the blobs orbit makes them look like they
+                // speed up compared with their idle motion.
+                .scaleEffect(
+                    state.farewellProgress > 0
+                        ? 1.0
+                        : 0.35 + 0.65 * state.orbitProgress
+                )
                 .opacity(Double(state.orbitProgress))
                 .animation(PanelMotion.stateAnimation, value: expanded)
 
@@ -197,11 +205,21 @@ struct ImmersiveOnboardingRootView: View {
                 .frame(width: 300, height: 300)
                 .opacity(Double(state.ignitionFlash))
         }
+        // Give the halo room for the blur/gradient spill so the
+        // rasterized bounds don't clip the glow at the edges.
+        .frame(width: 900, height: 900)
+        // Rasterize the halo to a single Metal layer so the soft warm
+        // bed, metaballs Canvas, and ignition flash translate as one
+        // unit during the farewell flight. The metaballs orbit is
+        // frozen (see `farewellFrozenTime`) once the flight starts, so
+        // this rasterization happens once and is translated cheaply —
+        // no per-frame Metal cost.
+        .drawingGroup()
         .allowsHitTesting(false)
     }
 
     @ViewBuilder
-    private var metaballs: some View {
+    private func metaballs(radiusScale: CGFloat) -> some View {
         if reduceMotion {
             Ellipse()
                 .fill(
@@ -223,25 +241,45 @@ struct ImmersiveOnboardingRootView: View {
             EmptyView()
         } else {
             TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { context in
-                let t = context.date.timeIntervalSinceReferenceDate
+                // Freeze the orbit during the farewell flight so the
+                // halo's `drawingGroup` rasterizes once and translates
+                // cheaply — live 60fps redraws during flight cause the
+                // outer offset animation to race the Canvas redraws,
+                // which leaves some blobs fading in place at center.
+                let t = state.farewellProgress > 0
+                    ? state.farewellFrozenTime
+                    : context.date.timeIntervalSinceReferenceDate
                 ZStack {
-                    metaballCanvas(t: t, color: Color(red: 1.0, green: 0.42, blue: 0.12), seed: 0.0, speed: 0.375).opacity(0.66)
-                    metaballCanvas(t: t, color: Color(red: 1.0, green: 0.66, blue: 0.25), seed: 1.8, speed: -0.525).opacity(0.58)
-                    metaballCanvas(t: t, color: Color(red: 1.0, green: 0.84, blue: 0.55), seed: 3.6, speed: 0.65).opacity(0.54)
+                    MetaballCanvasLayer(t: t, color: Color(red: 1.0, green: 0.42, blue: 0.12), seed: 0.0, speed: 0.375, radiusScale: radiusScale).opacity(0.66)
+                    MetaballCanvasLayer(t: t, color: Color(red: 1.0, green: 0.66, blue: 0.25), seed: 1.8, speed: -0.525, radiusScale: radiusScale).opacity(0.58)
+                    MetaballCanvasLayer(t: t, color: Color(red: 1.0, green: 0.84, blue: 0.55), seed: 3.6, speed: 0.65, radiusScale: radiusScale).opacity(0.54)
                 }
             }
         }
     }
 
-    private func metaballCanvas(t: Double, color: Color, seed: Double, speed: Double) -> some View {
-        let blobs: [(radius: CGFloat, orbit: CGFloat, phase: Double, wobble: CGFloat)] = [
+    private struct MetaballCanvasLayer: View, Animatable {
+        let t: Double
+        let color: Color
+        let seed: Double
+        let speed: Double
+        var radiusScale: CGFloat
+
+        var animatableData: CGFloat {
+            get { radiusScale }
+            set { radiusScale = newValue }
+        }
+
+        private let blobs: [(radius: CGFloat, orbit: CGFloat, phase: Double, wobble: CGFloat)] = [
             (70, 40,  0.0, 46),
             (85, 130, 1.7, 34),
             (55, 160, 3.1, 44),
             (75, 85,  4.5, 38),
             (60, 110, 2.4, 42),
         ]
-        return Canvas { context, size in
+
+        var body: some View {
+            Canvas { context, size in
             context.addFilter(.alphaThreshold(min: 0.40, color: color))
             context.addFilter(.blur(radius: 44))
             context.drawLayer { layer in
@@ -252,11 +290,12 @@ struct ImmersiveOnboardingRootView: View {
                     let a = t * speed * blobDir + blob.phase + seed
                     let x = cx + cos(a) * blob.orbit + sin(a * 0.73) * blob.wobble
                     let y = cy + sin(a) * blob.orbit + cos(a * 0.81) * blob.wobble
-                    let r = blob.radius
+                    let r = blob.radius * radiusScale
                     let rect = CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)
                     layer.fill(Path(ellipseIn: rect), with: .color(.white))
                 }
             }
+        }
         }
     }
 

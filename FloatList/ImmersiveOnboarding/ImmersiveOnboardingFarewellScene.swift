@@ -273,6 +273,9 @@ struct ImmersiveOnboardingFarewellScene: View {
         let targetX = fullFrame.width / 2 - panelHalfW - edgeInset
         let targetY = -(fullFrame.height / 2 - panelHalfH - edgeInset - menuBarHeight)
         state.farewellTarget = CGSize(width: targetX, height: targetY)
+        // Freeze the metaballs' orbit at its current position so the
+        // halo can rasterize once and translate as a single layer.
+        state.farewellFrozenTime = Date().timeIntervalSinceReferenceDate
 
         if reduceMotion {
             state.panelManager.isCollapsed = true
@@ -291,13 +294,13 @@ struct ImmersiveOnboardingFarewellScene: View {
             }
         }
 
-        // Fade the halo on its own quicker curve so the blobs don't
-        // drag a trail behind the travelling panel.
-        withAnimation(.easeOut(duration: 0.6)) {
-            state.orbitProgress = 0.0
-        }
-
+        // Fade and translate on the same curve so the halo's motion
+        // and its brightness change together — mixing curves (e.g.
+        // easeIn fade + easeInOut flight) reads as the blobs
+        // accelerating mid-flight because the fade rate and the
+        // travel rate diverge.
         withAnimation(.easeInOut(duration: departureDuration)) {
+            state.orbitProgress = 0.0
             state.farewellProgress = 1.0
             state.backgroundDim = 0.0
         }

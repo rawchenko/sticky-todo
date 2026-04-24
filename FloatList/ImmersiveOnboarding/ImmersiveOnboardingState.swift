@@ -51,6 +51,14 @@ final class ImmersiveOnboardingState: ObservableObject {
     /// animation starts so it matches the current screen dimensions.
     @Published var farewellTarget: CGSize = .zero
 
+    /// Absolute time (timeIntervalSinceReferenceDate) captured at the
+    /// moment the farewell flight begins. The metaballs Canvas uses
+    /// this to freeze its orbit during the flight — when the orbit is
+    /// frozen, `drawingGroup` can rasterize the halo once and translate
+    /// it cheaply, so the whole halo trails the panel as one unit
+    /// without the 60fps re-rasterization cost.
+    @Published var farewellFrozenTime: Double = 0
+
     /// Flipped by Scene 3 on mount. The window uses this on close to
     /// decide whether to migrate the in-memory tasks into the real Inbox
     /// — early ⌘W or close in Scene 1/2 should leave the real store
