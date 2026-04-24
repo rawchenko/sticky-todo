@@ -1757,9 +1757,7 @@ struct ContentView: View {
         let draggingID = session.item.id
         let overlayMidY = session.overlayMidY
         let remaining = order.filter { $0 != draggingID }
-        let frames = remaining.enumerated().map { index, rowID in
-            rowFrames[rowID] ?? estimatedFrame(for: rowID, at: index, in: remaining, session: session)
-        }
+        let frames = targetResolutionFrames(for: remaining, session: session)
         return min(
             max(
                 ReorderInteractionMath.targetIndex(
@@ -1771,6 +1769,32 @@ struct ContentView: View {
             ),
             remaining.count
         )
+    }
+
+    private func targetResolutionFrames(for order: [UUID], session: DragSession) -> [CGRect] {
+        var frames: [CGRect] = []
+        frames.reserveCapacity(order.count)
+
+        var nextEstimatedY: CGFloat = 0
+        for rowID in order {
+            if let measured = rowFrames[rowID] {
+                frames.append(measured)
+                nextEstimatedY = measured.maxY + tweaks.rowSpacing
+                continue
+            }
+
+            let height = rowHeights[rowID] ?? RowMetrics.estimatedHeight
+            let frame = CGRect(
+                x: session.initialFrame.minX,
+                y: nextEstimatedY,
+                width: session.initialFrame.width,
+                height: height
+            )
+            frames.append(frame)
+            nextEstimatedY += height + tweaks.rowSpacing
+        }
+
+        return frames
     }
 
     private func currentAutoScrollVelocity(for session: DragSession) -> CGFloat {

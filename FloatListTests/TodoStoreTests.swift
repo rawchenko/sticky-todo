@@ -121,6 +121,7 @@ final class TodoStoreTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: backupURL.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
 
+        store.save()
         let reloaded = try JSONDecoder().decode(TodoStoreFile.self, from: Data(contentsOf: fileURL))
         XCTAssertEqual(reloaded.todos.map(\.title), ["Recovered task"])
         XCTAssertEqual(reloaded.lists.map(\.name), [TodoList.inboxName, "Tasks"])
@@ -1009,6 +1010,7 @@ final class TodoStoreTests: XCTestCase {
         XCTAssertEqual(store.items.map(\.title), ["Buy milk"])
         XCTAssertEqual(store.items.first?.listID, TodoList.inboxID)
 
+        store.save()
         let persisted = try JSONDecoder().decode(TodoStoreFile.self, from: Data(contentsOf: fileURL))
         XCTAssertEqual(persisted.lists.map(\.id), [TodoList.inboxID])
         XCTAssertEqual(persisted.todos.map(\.title), ["Buy milk"])
@@ -1057,6 +1059,43 @@ final class TodoStoreTests: XCTestCase {
         store.undo()
         XCTAssertEqual(store.lists.map(\.id), [TodoList.inboxID])
         XCTAssertFalse(store.canUndo)
+    }
+
+    func testToggleManyUndoRestoresBatchInOneStep() throws {
+        let store = TodoStore(fileURL: try makeStoreFileURL())
+        _ = store.addList(name: "Work")
+        store.add(title: "A")
+        store.add(title: "B")
+        store.add(title: "C")
+
+        store.toggleMany(Array(store.items.prefix(2)))
+
+        XCTAssertEqual(store.items.map(\.title), ["C", "A", "B"])
+        XCTAssertEqual(store.items.map(\.isCompleted), [false, true, true])
+
+        store.undo()
+
+        XCTAssertEqual(store.items.map(\.title), ["A", "B", "C"])
+        XCTAssertEqual(store.items.map(\.isCompleted), [false, false, false])
+    }
+
+    func testMoveItemsUndoRestoresBatchInOneStep() throws {
+        let store = TodoStore(fileURL: try makeStoreFileURL())
+        let source = store.addList(name: "Source")
+        store.add(title: "A")
+        store.add(title: "B")
+        let target = store.addList(name: "Target")
+        store.add(title: "T")
+
+        let moving = store.items.filter { $0.listID == source.id }
+        store.moveItems(moving, to: target.id)
+
+        XCTAssertEqual(store.items(in: target.id).map(\.title), ["T", "A", "B"])
+
+        store.undo()
+
+        XCTAssertEqual(store.items(in: source.id).map(\.title), ["A", "B"])
+        XCTAssertEqual(store.items(in: target.id).map(\.title), ["T"])
     }
 
     private func makeStoreFileURL() throws -> URL {

@@ -51,6 +51,28 @@ final class TodoStore: ObservableObject {
     private let inMemory: Bool
     private var isStorageWritable = true
     private var isBatching = false
+    private let persistenceQueue = DispatchQueue(label: "FloatList.TodoStore.persistence", qos: .utility)
+    private var pendingSave: PendingSave?
+    private var terminationObserver: NSObjectProtocol?
+
+    private static let saveDebounceInterval: TimeInterval = 0.35
+
+    private final class PendingSave: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+
+        func cancel() {
+            lock.lock()
+            cancelled = true
+            lock.unlock()
+        }
+
+        var isCancelled: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return cancelled
+        }
+    }
 
     var isReadOnly: Bool {
         !isStorageWritable
@@ -69,12 +91,29 @@ final class TodoStore: ObservableObject {
                 didMigrateLegacyStore = migrateLegacyStoreIfNeeded()
             }
         }
+        if !inMemory {
+            terminationObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.willTerminateNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.save()
+                }
+            }
+        }
         load()
         if didMigrateLegacyStore, recoveryNotice == nil {
             recoveryNotice = TodoStoreRecoveryNotice(
                 message: "Migrated existing data from previous install.",
                 backupURL: nil
             )
+        }
+    }
+
+    deinit {
+        if let terminationObserver {
+            NotificationCenter.default.removeObserver(terminationObserver)
         }
     }
 
@@ -188,13 +227,41 @@ final class TodoStore: ObservableObject {
     func save() {
         guard !inMemory else { return }
         guard isStorageWritable else { return }
+        pendingSave?.cancel()
+        pendingSave = nil
+        let file = storeFileSnapshot()
+        let fileURL = fileURL
+        persistenceQueue.sync {
+            Self.writeStoreFile(file, to: fileURL)
+        }
+    }
+
+    private func scheduleSave() {
+        guard !inMemory else { return }
+        guard isStorageWritable else { return }
         guard !isBatching else { return }
-        let file = TodoStoreFile(
+        pendingSave?.cancel()
+
+        let pendingSave = PendingSave()
+        self.pendingSave = pendingSave
+        let file = storeFileSnapshot()
+        let fileURL = fileURL
+        persistenceQueue.asyncAfter(deadline: .now() + Self.saveDebounceInterval) {
+            guard !pendingSave.isCancelled else { return }
+            Self.writeStoreFile(file, to: fileURL)
+        }
+    }
+
+    private func storeFileSnapshot() -> TodoStoreFile {
+        TodoStoreFile(
             schemaVersion: Self.currentSchemaVersion,
             lists: lists,
             todos: items,
             selectedListID: selectedListID
         )
+    }
+
+    nonisolated private static func writeStoreFile(_ file: TodoStoreFile, to fileURL: URL) {
         guard let data = try? JSONEncoder().encode(file) else { return }
         try? data.write(to: fileURL, options: .atomic)
     }
@@ -221,7 +288,7 @@ final class TodoStore: ObservableObject {
         isBatching = true
         body()
         isBatching = false
-        save()
+        scheduleSave()
     }
 
     func undo() {
@@ -234,7 +301,7 @@ final class TodoStore: ObservableObject {
         let stillHasHistory = !undoStack.isEmpty
         if canUndo != stillHasHistory { canUndo = stillHasHistory }
         if !canRedo { canRedo = true }
-        save()
+        scheduleSave()
     }
 
     func redo() {
@@ -250,7 +317,7 @@ final class TodoStore: ObservableObject {
         if !canUndo { canUndo = true }
         let stillHasRedo = !redoStack.isEmpty
         if canRedo != stillHasRedo { canRedo = stillHasRedo }
-        save()
+        scheduleSave()
     }
 
     // MARK: - Import
@@ -291,7 +358,7 @@ final class TodoStore: ObservableObject {
             }
             items.append(copy)
         }
-        save()
+        scheduleSave()
     }
 
     // MARK: - Todos
@@ -303,7 +370,7 @@ final class TodoStore: ObservableObject {
         guard !isSpecialListID(listID) else { return }
         captureUndoSnapshot()
         items.append(TodoItem(title: trimmed, listID: listID))
-        save()
+        scheduleSave()
     }
 
     func rename(_ item: TodoItem, to newTitle: String) {
@@ -313,7 +380,7 @@ final class TodoStore: ObservableObject {
         guard items[idx].title != trimmed else { return }
         captureUndoSnapshot()
         items[idx].title = trimmed
-        save()
+        scheduleSave()
     }
 
     func toggle(_ item: TodoItem) {
@@ -331,7 +398,7 @@ final class TodoStore: ObservableObject {
             fallback: idx
         )
         items.insert(updated, at: destination)
-        save()
+        scheduleSave()
     }
 
     func delete(_ item: TodoItem) {
@@ -343,7 +410,7 @@ final class TodoStore: ObservableObject {
         guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
         captureUndoSnapshot()
         moveItemToTrash(at: idx)
-        save()
+        scheduleSave()
     }
 
     func restore(_ item: TodoItem) {
@@ -368,7 +435,7 @@ final class TodoStore: ObservableObject {
         items[idx].trashedOriginalListID = nil
         items[idx].trashedOriginalListName = nil
         selectedListID = priorSelection
-        save()
+        scheduleSave()
     }
 
     func permanentlyDelete(_ item: TodoItem) {
@@ -379,7 +446,7 @@ final class TodoStore: ObservableObject {
         if selectedListID == TodoList.trashID && lists.isEmpty && !hasTrashedItems {
             selectedListID = nil
         }
-        save()
+        scheduleSave()
     }
 
     func emptyTrash() {
@@ -390,7 +457,7 @@ final class TodoStore: ObservableObject {
         if selectedListID == TodoList.trashID && lists.isEmpty {
             selectedListID = nil
         }
-        save()
+        scheduleSave()
     }
 
     func originalListName(for item: TodoItem) -> String {
@@ -437,36 +504,98 @@ final class TodoStore: ObservableObject {
         }
 
         items.insert(moving, at: destinationAbsolute)
-        save()
+        scheduleSave()
     }
 
     // MARK: - Bulk actions
 
-    private func applyMany(
-        _ items: [TodoItem],
-        filter: (TodoItem) -> Bool,
-        action: (TodoItem) -> Void
-    ) {
+    func toggleMany(_ items: [TodoItem]) {
         guard !isReadOnly else { return }
-        let targets = items.filter(filter)
-        guard !targets.isEmpty else { return }
+        let requestedIDs = orderedUniqueIDs(from: items)
+        guard !requestedIDs.isEmpty else { return }
+
+        let orderByID = Dictionary(uniqueKeysWithValues: requestedIDs.enumerated().map { ($0.element, $0.offset) })
+        var toggledByList: [UUID: [TodoItem]] = [:]
+        var didChange = false
+
+        for item in self.items where orderByID[item.id] != nil {
+            guard let listID = item.listID, !isSpecialListID(listID) else { continue }
+            var copy = item
+            copy.isCompleted.toggle()
+            toggledByList[listID, default: []].append(copy)
+            didChange = true
+        }
+
+        guard didChange else { return }
+
         performBatch {
-            for item in targets { action(item) }
+            self.items.removeAll { orderByID[$0.id] != nil && ($0.listID.map { !self.isSpecialListID($0) } ?? false) }
+
+            let affectedListIDs = toggledByList.keys.sorted { lhs, rhs in
+                let lhsOrder = toggledByList[lhs]?.compactMap { orderByID[$0.id] }.min() ?? Int.max
+                let rhsOrder = toggledByList[rhs]?.compactMap { orderByID[$0.id] }.min() ?? Int.max
+                return lhsOrder < rhsOrder
+            }
+
+            for listID in affectedListIDs {
+                let toggled = (toggledByList[listID] ?? []).sorted {
+                    (orderByID[$0.id] ?? Int.max) < (orderByID[$1.id] ?? Int.max)
+                }
+                let movedToActive = toggled.filter { !$0.isCompleted }
+                let movedToCompleted = toggled.filter(\.isCompleted)
+
+                insert(movedToActive, into: listID, insertingCompleted: false)
+                insert(movedToCompleted, into: listID, insertingCompleted: true)
+            }
         }
     }
 
-    func toggleMany(_ items: [TodoItem]) {
-        applyMany(items,
-                  filter: { item in item.listID.map { !self.isSpecialListID($0) } ?? false },
-                  action: toggle)
-    }
-
     func moveManyToTrash(_ items: [TodoItem]) {
-        applyMany(items, filter: { !$0.isTrashed }, action: moveToTrash)
+        guard !isReadOnly else { return }
+        let ids = Set(orderedUniqueIDs(from: items))
+        guard !ids.isEmpty, self.items.contains(where: { ids.contains($0.id) && !$0.isTrashed }) else { return }
+
+        performBatch {
+            for index in self.items.indices where ids.contains(self.items[index].id) {
+                moveItemToTrash(at: index)
+            }
+        }
     }
 
     func restoreMany(_ items: [TodoItem]) {
-        applyMany(items, filter: { $0.isTrashed }, action: restore)
+        guard !isReadOnly else { return }
+        let requestedIDs = orderedUniqueIDs(from: items)
+        guard !requestedIDs.isEmpty else { return }
+
+        let indexByID = Dictionary(uniqueKeysWithValues: self.items.indices.map { (self.items[$0].id, $0) })
+        let targetIDs = requestedIDs.filter { id in
+            guard let index = indexByID[id] else { return false }
+            return self.items[index].isTrashed
+        }
+        guard !targetIDs.isEmpty else { return }
+
+        performBatch {
+            let priorSelection = selectedListID
+            for id in targetIDs {
+                guard let index = indexByID[id], self.items.indices.contains(index), self.items[index].isTrashed else { continue }
+
+                let targetListID: UUID
+                if let originalListID = self.items[index].trashedOriginalListID,
+                   lists.contains(where: { $0.id == originalListID }) {
+                    targetListID = originalListID
+                } else {
+                    let recreatedList = TodoList(name: restoreListName(for: self.items[index]))
+                    lists.append(recreatedList)
+                    targetListID = recreatedList.id
+                }
+
+                self.items[index].listID = targetListID
+                self.items[index].trashedAt = nil
+                self.items[index].trashedOriginalListID = nil
+                self.items[index].trashedOriginalListName = nil
+            }
+            selectedListID = priorSelection
+        }
     }
 
     func permanentlyDeleteMany(_ items: [TodoItem]) {
@@ -482,11 +611,45 @@ final class TodoStore: ObservableObject {
     }
 
     func moveItems(_ items: [TodoItem], to targetListID: UUID) {
+        guard !isReadOnly else { return }
         guard !isSpecialListID(targetListID) else { return }
         guard lists.contains(where: { $0.id == targetListID }) else { return }
-        applyMany(items,
-                  filter: { !$0.isTrashed && $0.listID != targetListID },
-                  action: { self.moveItem($0, to: targetListID) })
+        let requestedIDs = orderedUniqueIDs(from: items)
+        guard !requestedIDs.isEmpty else { return }
+
+        let orderByID = Dictionary(uniqueKeysWithValues: requestedIDs.enumerated().map { ($0.element, $0.offset) })
+        let movingItems = self.items.compactMap { item -> TodoItem? in
+            guard orderByID[item.id] != nil,
+                  !item.isTrashed,
+                  item.listID != targetListID
+            else { return nil }
+            var copy = item
+            copy.listID = targetListID
+            return copy
+        }.sorted {
+            (orderByID[$0.id] ?? Int.max) < (orderByID[$1.id] ?? Int.max)
+        }
+        guard !movingItems.isEmpty else { return }
+
+        performBatch {
+            self.items.removeAll { orderByID[$0.id] != nil && !$0.isTrashed && $0.listID != targetListID }
+            insert(movingItems.filter { !$0.isCompleted }, into: targetListID, insertingCompleted: false)
+            insert(movingItems.filter(\.isCompleted), into: targetListID, insertingCompleted: true)
+        }
+    }
+
+    private func orderedUniqueIDs(from items: [TodoItem]) -> [UUID] {
+        var seen = Set<UUID>()
+        return items.compactMap { item in
+            guard seen.insert(item.id).inserted else { return nil }
+            return item.id
+        }
+    }
+
+    private func insert(_ insertedItems: [TodoItem], into listID: UUID, insertingCompleted: Bool) {
+        guard !insertedItems.isEmpty else { return }
+        let destination = insertionIndex(for: listID, insertingCompleted: insertingCompleted, fallback: items.count)
+        items.insert(contentsOf: insertedItems, at: destination)
     }
 
     // MARK: - Lists
@@ -499,7 +662,7 @@ final class TodoStore: ObservableObject {
         captureUndoSnapshot()
         lists.append(list)
         selectedListID = list.id
-        save()
+        scheduleSave()
         return list
     }
 
@@ -510,7 +673,7 @@ final class TodoStore: ObservableObject {
         guard lists[idx].name != trimmed else { return }
         captureUndoSnapshot()
         lists[idx].name = trimmed
-        save()
+        scheduleSave()
     }
 
     func setListIcon(_ list: TodoList, to icon: String) {
@@ -523,7 +686,7 @@ final class TodoStore: ObservableObject {
         guard lists[idx].icon != trimmed else { return }
         captureUndoSnapshot()
         lists[idx].icon = trimmed
-        save()
+        scheduleSave()
     }
 
     func setListColor(_ list: TodoList, to color: ListIconColor?) {
@@ -532,7 +695,7 @@ final class TodoStore: ObservableObject {
         guard lists[idx].iconColor != color else { return }
         captureUndoSnapshot()
         lists[idx].iconColor = color
-        save()
+        scheduleSave()
     }
 
     func deleteList(_ list: TodoList) {
@@ -547,7 +710,7 @@ final class TodoStore: ObservableObject {
         if selectedListID == list.id {
             selectedListID = lists.first?.id ?? fallbackVirtualSelection()
         }
-        save()
+        scheduleSave()
     }
 
     /// Move an item into a different regular list, preserving the active/completed
@@ -570,7 +733,7 @@ final class TodoStore: ObservableObject {
             fallback: items.count
         )
         items.insert(moving, at: destination)
-        save()
+        scheduleSave()
     }
 
     func moveList(from: Int, to: Int) {
@@ -581,7 +744,7 @@ final class TodoStore: ObservableObject {
         captureUndoSnapshot()
         let list = lists.remove(at: from)
         lists.insert(list, at: to)
-        save()
+        scheduleSave()
     }
 
     func selectList(_ id: UUID?) {
@@ -589,7 +752,7 @@ final class TodoStore: ObservableObject {
         guard id == nil || isSpecialListID(id) || lists.contains(where: { $0.id == id }) else { return }
         guard selectedListID != id else { return }
         selectedListID = id
-        save()
+        scheduleSave()
     }
 
     // MARK: - Migration / recovery
