@@ -635,6 +635,14 @@ struct ContentView: View {
         }
     }
 
+    private func performRedo() {
+        guard store.canRedo else { return }
+        undoTick &+= 1
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.82)) {
+            store.redo()
+        }
+    }
+
     private func createList() {
         guard !store.isReadOnly else { return }
         withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
@@ -1755,12 +1763,17 @@ struct ContentView: View {
         undoMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
             guard event.keyCode == undoKeyCode,
                   event.modifierFlags.contains(.command),
-                  !event.modifierFlags.contains(.shift),
                   !event.modifierFlags.contains(.option),
                   !event.modifierFlags.contains(.control)
             else { return event }
-            guard onboarding.allowsUndo, store.canUndo else { return event }
-            performUndo()
+            guard onboarding.allowsUndo else { return event }
+            if event.modifierFlags.contains(.shift) {
+                guard store.canRedo else { return event }
+                performRedo()
+            } else {
+                guard store.canUndo else { return event }
+                performUndo()
+            }
             return nil
         }
     }

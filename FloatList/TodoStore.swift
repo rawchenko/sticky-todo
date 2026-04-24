@@ -34,6 +34,7 @@ final class TodoStore: ObservableObject {
     @Published var selectedListID: UUID?
     @Published var recoveryNotice: TodoStoreRecoveryNotice?
     @Published private(set) var canUndo: Bool = false
+    @Published private(set) var canRedo: Bool = false
 
     private struct UndoSnapshot {
         let items: [TodoItem]
@@ -42,6 +43,7 @@ final class TodoStore: ObservableObject {
     }
 
     private var undoStack: [UndoSnapshot] = []
+    private var redoStack: [UndoSnapshot] = []
     private let undoStackLimit = 50
 
     private let fileURL: URL
@@ -207,6 +209,10 @@ final class TodoStore: ObservableObject {
             undoStack.removeFirst(undoStack.count - undoStackLimit)
         }
         if !canUndo { canUndo = true }
+        if !redoStack.isEmpty {
+            redoStack.removeAll()
+            canRedo = false
+        }
     }
 
     private func performBatch(_ body: () -> Void) {
@@ -221,11 +227,29 @@ final class TodoStore: ObservableObject {
     func undo() {
         guard !isReadOnly else { return }
         guard let snapshot = undoStack.popLast() else { return }
+        redoStack.append(UndoSnapshot(items: items, lists: lists, selectedListID: selectedListID))
         items = snapshot.items
         lists = snapshot.lists
         selectedListID = snapshot.selectedListID
         let stillHasHistory = !undoStack.isEmpty
         if canUndo != stillHasHistory { canUndo = stillHasHistory }
+        if !canRedo { canRedo = true }
+        save()
+    }
+
+    func redo() {
+        guard !isReadOnly else { return }
+        guard let snapshot = redoStack.popLast() else { return }
+        undoStack.append(UndoSnapshot(items: items, lists: lists, selectedListID: selectedListID))
+        if undoStack.count > undoStackLimit {
+            undoStack.removeFirst(undoStack.count - undoStackLimit)
+        }
+        items = snapshot.items
+        lists = snapshot.lists
+        selectedListID = snapshot.selectedListID
+        if !canUndo { canUndo = true }
+        let stillHasRedo = !redoStack.isEmpty
+        if canRedo != stillHasRedo { canRedo = stillHasRedo }
         save()
     }
 
