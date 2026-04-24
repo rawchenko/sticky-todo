@@ -417,7 +417,11 @@ struct TodoRowView: View {
     var onDelete: () -> Void
     var onRestore: (() -> Void)? = nil
     var onRename: (String) -> Void = { _ in }
+    /// Called continuously during an active reorder drag with the cursor's Y
+    /// in the shared "taskListContent" coordinate space (identical to the
+    /// space `rowFrames` report in).
     var onDragChanged: (CGFloat) -> Void = { _ in }
+    /// Called when the drag gesture ends with the final cursor Y.
     var onDragEnded: (CGFloat) -> Void = { _ in }
     var moveDestinations: [TodoList] = []
     var onMoveToList: (UUID) -> Void = { _ in }
@@ -554,7 +558,7 @@ struct TodoRowView: View {
                     )
                     .preference(
                         key: RowFramePreferenceKey.self,
-                        value: [item.id: geo.frame(in: .named("taskListContent"))]
+                        value: [item.id: geo.frame(in: .named(ReorderCoordinateSpace.taskList))]
                     )
                     .onAppear { rowWidth = geo.size.width }
                     .onChange(of: geo.size.width) { _, new in rowWidth = new }
@@ -658,7 +662,7 @@ struct TodoRowView: View {
             }
         }
         .gesture(
-            DragGesture(minimumDistance: 4, coordinateSpace: .named("list"))
+            DragGesture(minimumDistance: 4, coordinateSpace: .named(ReorderCoordinateSpace.taskList))
                 .onChanged { value in
                     guard isReorderEnabled, !isEditing else { return }
                     guard shouldActivateReorder(for: value.translation) || hasActivatedReorderGesture else { return }
@@ -670,11 +674,13 @@ struct TodoRowView: View {
                         NSCursor.closedHand.push()
                         didPushCursor = true
                     }
-                    onDragChanged(effectiveReorderTranslation(for: value.translation))
+                    onDragChanged(value.location.y)
                 }
                 .onEnded { value in
                     releaseDragCursor()
-                    onDragEnded(hasActivatedReorderGesture ? effectiveReorderTranslation(for: value.translation) : 0)
+                    if hasActivatedReorderGesture {
+                        onDragEnded(value.location.y)
+                    }
                     hasActivatedReorderGesture = false
                 },
             including: (isEditing || !isReorderEnabled) ? .subviews : .all
@@ -971,12 +977,6 @@ struct TodoRowView: View {
         let horizontal = abs(translation.width)
         guard vertical > reorderActivationDistance else { return false }
         return vertical > (horizontal * reorderVerticalIntentRatio) || vertical > horizontal + reorderVerticalIntentBias
-    }
-
-    private func effectiveReorderTranslation(for translation: CGSize) -> CGFloat {
-        let raw = translation.height
-        let magnitude = max(0, abs(raw) - reorderActivationDistance)
-        return raw.sign == .minus ? -magnitude : magnitude
     }
 
     private var rowShape: UnevenRoundedRectangle {

@@ -394,19 +394,37 @@ struct ContentView: View {
         let targetCompleted: Bool
     }
 
-    private struct DragSession {
+    /// Drag reordering tracks the cursor's Y directly in the shared content
+    /// coordinate space. This coincides with the space `rowFrames` report in,
+    /// so target-index resolution is a straight comparison against row
+    /// midlines — no translation/frame reconstruction needed.
+    private struct DragSession: Equatable {
         let item: TodoItem
         let originalIndex: Int
-        let initialFrame: CGRect
-        let frozenRowHeight: CGFloat
-        var gestureTranslation: CGFloat
-        var lastCompositeTranslation: CGFloat
-        var dragDirection: ReorderDragDirection
-        var autoScrollVelocity: CGFloat
+        /// The dragging row's frame captured at gesture begin. Width/minX seed
+        /// the overlay's horizontal position; height seeds the placeholder.
+        let rowFrame: CGRect
+        /// Non-dragging row IDs in list order. Cached at begin so per-tick
+        /// target resolution skips a repeated `filter` over `store.items`.
+        let remainingOrder: [UUID]
+        var pointerY: CGFloat
         var targetIndex: Int
+        var lastDirection: ReorderDragDirection
+        var autoScrollVelocity: CGFloat
+        /// When true, the overlay's Y is taken from `rowFrames[item.id]` (the
+        /// live position of the dragging row's hidden slot) instead of
+        /// `pointerY`. Set during drop settle so the overlay rides the reflow
+        /// animation into its new slot in perfect sync.
+        var snapsToRowFrame: Bool = false
 
-        var overlayMidY: CGFloat {
-            initialFrame.midY + gestureTranslation
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            // Identity-keyed: only the mutable fields change within a session.
+            lhs.item.id == rhs.item.id
+                && lhs.pointerY == rhs.pointerY
+                && lhs.targetIndex == rhs.targetIndex
+                && lhs.lastDirection == rhs.lastDirection
+                && lhs.autoScrollVelocity == rhs.autoScrollVelocity
+                && lhs.snapsToRowFrame == rhs.snapsToRowFrame
         }
     }
 
@@ -841,6 +859,7 @@ struct ContentView: View {
                         }
                         .padding(.horizontal, tweaks.contentHorizontalPadding)
                         .padding(.vertical, 4)
+                        .animation(Self.reorderStepAnimation, value: dragSession?.targetIndex)
                     }
                 }
             }
@@ -879,18 +898,18 @@ struct ContentView: View {
                 onOutside: { clearSelection() }
             )
         )
-        .coordinateSpace(name: "taskListContent")
-        .coordinateSpace(name: "list")
+        .coordinateSpace(name: ReorderCoordinateSpace.taskList)
         .onPreferenceChange(RowHeightPreferenceKey.self) { heights in
             rowHeights.merge(heights) { _, new in new }
         }
         .onPreferenceChange(RowFramePreferenceKey.self) { frames in
+            // Don't refresh the drag target here — intermediate frames emitted
+            // during the reflow animation would oscillate it. Target recompute
+            // is driven by pointer moves (handleDragChanged) and auto-scroll.
             rowFrames = frames
-            refreshDragSessionTarget(triggerHaptic: true)
         }
         .onPreferenceChange(TaskListViewportPreferenceKey.self) { viewport in
             taskListViewport = viewport
-            refreshDragSessionTarget(triggerHaptic: false)
         }
         .onChange(of: store.items.map(\.id)) { _, ids in
             let live = Set(ids)
@@ -905,7 +924,6 @@ struct ContentView: View {
             cancelDrag()
         }
         .frame(maxHeight: .infinity)
-        .animation(Self.reorderStepAnimation, value: dragSession?.targetIndex)
         }
     }
 
@@ -913,25 +931,24 @@ struct ContentView: View {
     private var regularListSection: some View {
         let items = projectedRegularItems
 
+        // The dragging row stays mounted at opacity 0 (not swapped for a
+        // placeholder) so its DragGesture keeps receiving events — unmounting
+        // cancels the gesture mid-drag.
         ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
-            if draggingID == item.id {
-                Color.clear
-                    .frame(height: dragSession?.item.id == item.id ? (dragSession?.frozenRowHeight ?? RowMetrics.estimatedHeight) : (rowHeights[item.id] ?? RowMetrics.estimatedHeight))
-                    .frame(maxWidth: .infinity)
-                    .overlay {
-                        dragLandingIndicator()
-                    }
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
-            } else {
-                taskRow(
-                    item,
-                    prevItemID: idx > 0 ? items[idx - 1].id : nil,
-                    nextItemID: idx < items.count - 1 ? items[idx + 1].id : nil
-                )
-                .transition(.opacity.combined(with: .move(edge: .top)))
+            let isBeingDragged = draggingID == item.id
+            taskRow(
+                item,
+                prevItemID: idx > 0 ? items[idx - 1].id : nil,
+                nextItemID: idx < items.count - 1 ? items[idx + 1].id : nil
+            )
+            .opacity(isBeingDragged ? 0 : 1)
+            .overlay {
+                if isBeingDragged {
+                    dragLandingIndicator()
+                        .allowsHitTesting(false)
+                }
             }
+            .transition(.opacity.combined(with: .move(edge: .top)))
         }
     }
 
@@ -989,11 +1006,11 @@ struct ContentView: View {
             onRename: { newTitle in
                 store.rename(item, to: newTitle)
             },
-            onDragChanged: { translation in
-                handleDragChanged(for: item.id, translation: translation)
+            onDragChanged: { pointerY in
+                handleDragChanged(for: item.id, pointerY: pointerY)
             },
-            onDragEnded: { translation in
-                commitDrag(for: item.id, translation: translation)
+            onDragEnded: { pointerY in
+                commitDrag(for: item.id, pointerY: pointerY)
             },
             moveDestinations: isTrashItem ? [] : store.lists.filter { $0.id != moveExcludeListID },
             onMoveToList: { targetListID in
@@ -1432,6 +1449,7 @@ struct ContentView: View {
                     LazyVStack(spacing: tweaks.rowSpacing) {
                         regularListSection
                     }
+                    .animation(Self.reorderStepAnimation, value: dragSession?.targetIndex)
                     Spacer(minLength: 0)
                 }
                 completedToggleButton(for: listID, count: currentCompletedItems.count)
@@ -1547,20 +1565,70 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Drag
+    // MARK: - Drag reordering
+    //
+    // The cursor's Y in "taskListContent" space is the single source of truth.
+    // `rowFrames` report in the same space, so target resolution is a direct
+    // comparison against row midlines. The overlay pins to `pointerY` so it
+    // stays on the cursor through auto-scroll (row frames shift while the
+    // cursor's viewport-relative Y doesn't).
 
-    private func handleDragChanged(for id: UUID, translation: CGFloat) {
+    private func handleDragChanged(for id: UUID, pointerY: CGFloat) {
         let items = sortedItems
         let order = items.map(\.id)
-        guard beginDragSessionIfNeeded(for: id, translation: translation, items: items, order: order) else { return }
+
+        if dragSession == nil {
+            guard let originalIndex = order.firstIndex(of: id) else { return }
+
+            // Fall back to a neighbor's width/X if the preference hasn't
+            // propagated yet (the first drag after a list change can beat the
+            // PreferenceKey by one frame).
+            let rowHeight = rowHeights[id] ?? rowFrames[id]?.height ?? RowMetrics.estimatedHeight
+            let frame: CGRect
+            if let measured = rowFrames[id] {
+                frame = CGRect(x: measured.minX, y: measured.minY, width: measured.width, height: rowHeight)
+            } else if let neighbor = rowFrames.values.first {
+                frame = CGRect(x: neighbor.minX, y: 0, width: neighbor.width, height: rowHeight)
+            } else {
+                frame = CGRect(
+                    x: tweaks.contentHorizontalPadding,
+                    y: 0,
+                    width: max(0, tweaks.expandedWidth - tweaks.contentHorizontalPadding * 2),
+                    height: rowHeight
+                )
+            }
+
+            settleTask?.cancel()
+            settleTask = nil
+            // Don't resolve target on the first event — keep it at
+            // originalIndex. The 14pt activation distance means pointerY is
+            // already offset from the press location, and resolving now could
+            // jump the placeholder one slot before the user has moved.
+            let session = DragSession(
+                item: items[originalIndex],
+                originalIndex: originalIndex,
+                rowFrame: frame,
+                remainingOrder: order.filter { $0 != id },
+                pointerY: pointerY,
+                targetIndex: originalIndex,
+                lastDirection: .stationary,
+                autoScrollVelocity: autoScrollVelocity(forPointerY: pointerY)
+            )
+            dragSession = session
+            hoveredCompletedToggleListID = nil
+            ReorderHaptics.fire(.levelChange)
+            installEscapeMonitor()
+            syncAutoScrollLoop(with: session)
+            return
+        }
 
         guard var session = dragSession, session.item.id == id else { return }
-        session = updatedDragSession(session, translation: translation, in: order)
+        advance(&session, toPointerY: pointerY)
         applyDragSessionUpdate(session, triggerHaptic: true)
         syncAutoScrollLoop(with: session)
     }
 
-    private func commitDrag(for id: UUID, translation: CGFloat) {
+    private func commitDrag(for id: UUID, pointerY: CGFloat) {
         guard var session = dragSession, session.item.id == id else {
             removeEscapeMonitor()
             return
@@ -1569,18 +1637,11 @@ struct ContentView: View {
         settleTask?.cancel()
         settleTask = nil
 
-        let order = sortedItems.map(\.id)
-        session = updatedDragSession(
-            session,
-            translation: translation,
-            in: order,
-            includeAutoScroll: false
-        )
+        advance(&session, toPointerY: pointerY)
+        session.autoScrollVelocity = 0
+        session.snapsToRowFrame = true
 
         let target = session.targetIndex
-        session.gestureTranslation = dropTranslation(for: session, target: target, in: order)
-        session.lastCompositeTranslation = session.gestureTranslation
-
         let settledSession = session
         withAnimation(Self.reorderAnimation) {
             dragSession = settledSession
@@ -1615,32 +1676,37 @@ struct ContentView: View {
         removeEscapeMonitor()
     }
 
+    /// Re-resolve the target slot after row frames shift (e.g., during
+    /// auto-scroll). The pointer Y itself doesn't change, but the frames it's
+    /// compared against do.
     private func refreshDragSessionTarget(triggerHaptic: Bool) {
         guard settleTask == nil else { return }
         guard var session = dragSession else { return }
-
-        let order = sortedItems.map(\.id)
-        guard order.contains(session.item.id) else {
+        guard sortedItems.contains(where: { $0.id == session.item.id }) else {
             cancelDrag()
             return
         }
 
-        session = updatedDragSession(session, in: order)
+        session.targetIndex = resolvedTargetIndex(for: session)
+        session.autoScrollVelocity = autoScrollVelocity(forPointerY: session.pointerY)
         applyDragSessionUpdate(session, triggerHaptic: triggerHaptic)
         syncAutoScrollLoop(with: session)
     }
 
+    private func advance(_ session: inout DragSession, toPointerY pointerY: CGFloat) {
+        let delta = pointerY - session.pointerY
+        session.lastDirection = ReorderDragDirection(delta: delta, fallback: session.lastDirection)
+        session.pointerY = pointerY
+        session.targetIndex = resolvedTargetIndex(for: session)
+        session.autoScrollVelocity = autoScrollVelocity(forPointerY: pointerY)
+    }
+
     private func applyDragSessionUpdate(_ session: DragSession, triggerHaptic: Bool) {
+        guard dragSession != session else { return }
         let previousTarget = dragSession?.targetIndex
-        if previousTarget != session.targetIndex {
-            withAnimation(Self.reorderStepAnimation) {
-                dragSession = session
-            }
-            if triggerHaptic {
-                fireHaptic(.alignment)
-            }
-        } else {
-            dragSession = session
+        dragSession = session
+        if previousTarget != session.targetIndex && triggerHaptic {
+            ReorderHaptics.fire(.alignment)
         }
     }
 
@@ -1659,7 +1725,7 @@ struct ContentView: View {
             while !Task.isCancelled {
                 guard var session = dragSession else { break }
 
-                let velocity = currentAutoScrollVelocity(for: session)
+                let velocity = autoScrollVelocity(forPointerY: session.pointerY)
                 if abs(velocity) <= 0.1 {
                     session.autoScrollVelocity = 0
                     dragSession = session
@@ -1701,143 +1767,93 @@ struct ContentView: View {
 
     // MARK: - Drag math helpers
 
-    private func beginDragSessionIfNeeded(
-        for id: UUID,
-        translation: CGFloat,
-        items: [TodoItem],
-        order: [UUID]
-    ) -> Bool {
-        if dragSession != nil {
-            return true
-        }
-
-        guard let originalIndex = order.firstIndex(of: id),
-              let initialFrame = rowFrames[id]
-        else {
-            return false
-        }
-
-        settleTask?.cancel()
-        settleTask = nil
-        dragSession = DragSession(
-            item: items[originalIndex],
-            originalIndex: originalIndex,
-            initialFrame: initialFrame,
-            frozenRowHeight: rowHeights[id] ?? initialFrame.height,
-            gestureTranslation: translation,
-            lastCompositeTranslation: translation,
-            dragDirection: .stationary,
-            autoScrollVelocity: 0,
-            targetIndex: originalIndex
-        )
-        hoveredCompletedToggleListID = nil
-        fireHaptic(.levelChange)
-        installEscapeMonitor()
-        return true
-    }
-
-    private func updatedDragSession(
-        _ session: DragSession,
-        translation: CGFloat? = nil,
-        in order: [UUID],
-        includeAutoScroll: Bool = true
-    ) -> DragSession {
-        var updated = session
-        let nextTranslation = translation ?? session.gestureTranslation
-        let delta = nextTranslation - session.lastCompositeTranslation
-        updated.dragDirection = ReorderDragDirection(delta: delta, fallback: session.dragDirection)
-        updated.gestureTranslation = nextTranslation
-        updated.lastCompositeTranslation = nextTranslation
-        updated.targetIndex = resolvedTargetIndex(for: updated, in: order)
-        updated.autoScrollVelocity = includeAutoScroll ? currentAutoScrollVelocity(for: updated) : 0
-        return updated
-    }
-
-    private func resolvedTargetIndex(for session: DragSession, in order: [UUID]) -> Int {
-        let draggingID = session.item.id
-        let overlayMidY = session.overlayMidY
-        let remaining = order.filter { $0 != draggingID }
-        let frames = targetResolutionFrames(for: remaining, session: session)
+    private func resolvedTargetIndex(for session: DragSession) -> Int {
+        let frames = targetResolutionFrames(for: session)
         return min(
             max(
                 ReorderInteractionMath.targetIndex(
-                    for: overlayMidY,
+                    for: session.pointerY,
                     frames: frames,
-                    direction: session.dragDirection
+                    direction: session.lastDirection
                 ),
                 0
             ),
-            remaining.count
+            session.remainingOrder.count
         )
     }
 
-    private func targetResolutionFrames(for order: [UUID], session: DragSession) -> [CGRect] {
+    /// Build frames for the non-dragging rows. `LazyVStack` unmounts rows far
+    /// from the viewport, so `rowFrames` often lacks entries after scrolling.
+    /// Missing rows are estimated by anchoring on the first measured frame
+    /// and walking outward — rows before it get negative-Y estimates (above
+    /// the viewport), rows after the last measured stack below it. Without
+    /// this anchoring, missing rows would pile up on top of the visible
+    /// frames and target resolution would count phantom rows twice.
+    private func targetResolutionFrames(for session: DragSession) -> [CGRect] {
+        let order = session.remainingOrder
         var frames: [CGRect] = []
         frames.reserveCapacity(order.count)
+        let spacing = tweaks.rowSpacing
+        let rowMinX = session.rowFrame.minX
+        let rowWidth = session.rowFrame.width
 
-        var nextEstimatedY: CGFloat = 0
+        var firstMeasuredIdx = order.count
+        for (i, rowID) in order.enumerated() where rowFrames[rowID] != nil {
+            firstMeasuredIdx = i
+            break
+        }
+
+        guard firstMeasuredIdx < order.count else {
+            // No measured rows yet — best-effort layout starting at the
+            // pointer. Target resolution is coarse; auto-scroll will bring
+            // real rows into view on the next tick.
+            var y = session.pointerY
+            for rowID in order {
+                let h = rowHeights[rowID] ?? RowMetrics.estimatedHeight
+                frames.append(CGRect(x: rowMinX, y: y, width: rowWidth, height: h))
+                y += h + spacing
+            }
+            return frames
+        }
+
+        let firstFrame = rowFrames[order[firstMeasuredIdx]]!
+        var y = firstFrame.minY
+        for i in (0..<firstMeasuredIdx).reversed() {
+            let h = rowHeights[order[i]] ?? RowMetrics.estimatedHeight
+            y -= h + spacing
+        }
+
         for rowID in order {
             if let measured = rowFrames[rowID] {
                 frames.append(measured)
-                nextEstimatedY = measured.maxY + tweaks.rowSpacing
-                continue
+                y = measured.maxY + spacing
+            } else {
+                let h = rowHeights[rowID] ?? RowMetrics.estimatedHeight
+                frames.append(CGRect(x: rowMinX, y: y, width: rowWidth, height: h))
+                y += h + spacing
             }
-
-            let height = rowHeights[rowID] ?? RowMetrics.estimatedHeight
-            let frame = CGRect(
-                x: session.initialFrame.minX,
-                y: nextEstimatedY,
-                width: session.initialFrame.width,
-                height: height
-            )
-            frames.append(frame)
-            nextEstimatedY += height + tweaks.rowSpacing
         }
 
         return frames
     }
 
-    private func currentAutoScrollVelocity(for session: DragSession) -> CGFloat {
+    private func autoScrollVelocity(forPointerY pointerY: CGFloat) -> CGFloat {
         ReorderInteractionMath.autoScrollVelocity(
-            pointerY: session.overlayMidY,
+            pointerY: pointerY,
             viewport: taskListViewport
         )
     }
 
-    private func estimatedFrame(for id: UUID, at index: Int, in order: [UUID], session: DragSession? = nil) -> CGRect {
-        let activeSession = session ?? dragSession
-        let y = order.prefix(index).reduce(CGFloat(0)) { partial, rowID in
-            if activeSession?.item.id == rowID {
-                return partial + (activeSession?.frozenRowHeight ?? RowMetrics.estimatedHeight)
-            }
-            return partial + (rowHeights[rowID] ?? RowMetrics.estimatedHeight)
-        } + (CGFloat(index) * tweaks.rowSpacing)
-        let height: CGFloat
-        if activeSession?.item.id == id {
-            height = activeSession?.frozenRowHeight ?? RowMetrics.estimatedHeight
-        } else {
-            height = rowHeights[id] ?? RowMetrics.estimatedHeight
-        }
-        let width = activeSession?.initialFrame.width ?? max(0, tweaks.expandedWidth - (tweaks.contentHorizontalPadding * 2))
-        let minX = activeSession?.initialFrame.minX ?? tweaks.contentHorizontalPadding
-        return CGRect(x: minX, y: y, width: width, height: height)
-    }
-
-    private func dropTranslation(for session: DragSession, target: Int, in order: [UUID]) -> CGFloat {
-        var projectedOrder = order.filter { $0 != session.item.id }
-        let clampedTarget = min(max(target, 0), projectedOrder.count)
-        projectedOrder.insert(session.item.id, at: clampedTarget)
-        let destinationFrame = estimatedFrame(for: session.item.id, at: clampedTarget, in: projectedOrder, session: session)
-        return destinationFrame.midY - session.initialFrame.midY
-    }
-
     private func dragOverlay(for session: DragSession) -> some View {
-        TodoRowDragPreview(item: session.item)
-            .frame(width: session.initialFrame.width, height: session.frozenRowHeight, alignment: .topLeading)
-            .position(
-                x: session.initialFrame.midX,
-                y: session.initialFrame.midY + session.gestureTranslation
-            )
+        let y: CGFloat
+        if session.snapsToRowFrame, let frame = rowFrames[session.item.id] {
+            y = frame.midY
+        } else {
+            y = session.pointerY
+        }
+        return TodoRowDragPreview(item: session.item)
+            .frame(width: session.rowFrame.width, height: session.rowFrame.height, alignment: .topLeading)
+            .position(x: session.rowFrame.midX, y: y)
             .zIndex(1_000)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
@@ -1845,18 +1861,14 @@ struct ContentView: View {
 
     private func dragLandingIndicator() -> some View {
         RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous)
-            .fill(FloatListTheme.controlFillStrong.opacity(0.08))
+            .fill(FloatListTheme.controlFillStrong.opacity(0.22))
             .overlay(
                 RoundedRectangle(cornerRadius: tweaks.rowCornerRadius, style: .continuous)
-                    .stroke(FloatListTheme.hairline.opacity(0.18), lineWidth: 1)
+                    .stroke(FloatListTheme.hairline.opacity(0.55), lineWidth: 1)
             )
-            .shadow(color: FloatListTheme.panelShadow(opacity: 0.05), radius: 4, y: 1)
+            .shadow(color: FloatListTheme.panelShadow(opacity: 0.12), radius: 6, y: 2)
             .padding(.vertical, 3)
             .allowsHitTesting(false)
-    }
-
-    private func fireHaptic(_ pattern: NSHapticFeedbackManager.FeedbackPattern) {
-        NSHapticFeedbackManager.defaultPerformer.perform(pattern, performanceTime: .default)
     }
 
     private func installEscapeMonitor() {

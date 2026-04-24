@@ -1,4 +1,16 @@
+import AppKit
 import CoreGraphics
+
+enum ReorderCoordinateSpace {
+    static let taskList = "taskListContent"
+    static let listsDropdown = "listsMenu"
+}
+
+enum ReorderHaptics {
+    static func fire(_ pattern: NSHapticFeedbackManager.FeedbackPattern) {
+        NSHapticFeedbackManager.defaultPerformer.perform(pattern, performanceTime: .default)
+    }
+}
 
 enum ReorderDragDirection: Equatable {
     case up
